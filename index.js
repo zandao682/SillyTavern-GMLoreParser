@@ -1,5 +1,5 @@
 /**
- * GM Lore Parser — SillyTavern Extension  v0.0.10 (beta)
+ * GM Lore Parser — SillyTavern Extension  v0.0.11 (beta)
  *
  * Entry point only. All logic lives in modules/. Load order matters:
  * state → utils → lorebook → system → schema → entity → progression →
@@ -19,7 +19,7 @@
 // glpLoadModules (state.js, …) read MODULE_NAME / VERSION as globals, so expose
 // them on window. (MODULE_NAME is also the settings/chatMetadata key.)
 var MODULE_NAME = window.MODULE_NAME = 'gm-lore-parser';
-var VERSION     = window.VERSION     = '0.0.10';
+var VERSION     = window.VERSION     = '0.0.11';
 
 // Resolve our own install folder from this module's own URL so module loading
 // works regardless of the third-party folder name (a GitHub clone is typically
@@ -42,6 +42,7 @@ var GLP_MODULE_LOAD_ORDER = [
     'system',     // system definition (ruleset) — getSystemDef, evalFormula
     'schema',     // schema engine (applyFieldValue, regen, promotions)
     'entity',     // unified entity core + all type rules (player/npc/companion/creature)
+    'scene',      // party & scene rosters (always-on constant entries)
     'progression',// rank ladders + XP awards
     'inventory',  // equipment slots, inventory model, item box
     'capabilities',// unified capabilities (static + progressing; def-driven progression)
@@ -54,6 +55,7 @@ var GLP_MODULE_LOAD_ORDER = [
     'events',     // world events + plot lorebook
     'currency',   // pure wealth tracking
     'needs',      // life simulation needs meters
+    'header',     // narrative status header (merged from gm-narrative-header)
     'commands',   // # command interceptor
     'panel',      // status panel rendering
     'context',    // context injection
@@ -113,6 +115,9 @@ async function onMessageReceived(messageId) {
     let sheetChanged = false;
     const notifications = [];
 
+    // ── Narrative header: capture a [HEADER_FORMAT] block (rendered at the end) ──
+    if (captureHeaderFormat(messageId)) sheetChanged = true;
+
     // ── System definition (must apply before any consumer this message) ────────
     for (const b of extractBlocks(text, SHEET_BLOCKS.SYSTEM_DEF.begin, SHEET_BLOCKS.SYSTEM_DEF.end)) {
         await saveSystemDef(parseSystemDef(b.raw), settings);
@@ -169,6 +174,14 @@ async function onMessageReceived(messageId) {
         if (n.length) { sheetChanged = true; for (const x of n) notifications.push({ type: x.type, msg: x.msg }); }
     }
     }
+
+    if (featureOn('party'))
+    for (const b of extractBlocks(text, SHEET_BLOCKS.PARTY_UPDATE.begin, SHEET_BLOCKS.PARTY_UPDATE.end))
+        { if (await applyPartyUpdate(b.raw, settings)) sheetChanged = true; }
+
+    if (featureOn('scene'))
+    for (const b of extractBlocks(text, SHEET_BLOCKS.SCENE_UPDATE.begin, SHEET_BLOCKS.SCENE_UPDATE.end))
+        { if (await applySceneUpdate(b.raw, settings)) sheetChanged = true; }
 
     if (featureOn('domains'))
     for (const b of extractBlocks(text, SHEET_BLOCKS.DOMAIN_UPDATE.begin, SHEET_BLOCKS.DOMAIN_UPDATE.end))
@@ -285,6 +298,9 @@ async function onMessageReceived(messageId) {
         const c = stripAllBlocks(text);
         if (c !== text) rerenderMessage(messageId, c);
     }
+
+    // ── Narrative header: render + prepend after the message text is finalized ──
+    applyNarrativeHeader(messageId);
 }
 
 async function onUserMessageRendered(messageId) {
@@ -366,6 +382,20 @@ async function renderSettingsPanel() {
       <label class="glp-row"><input type="checkbox" id="glp-show-currency" ${settings.showCurrencyPanel? 'checked' : ''}><span>Currency &amp; companions panel</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-show-boons"    ${settings.showBoonPanel    ? 'checked' : ''}><span>Abilities &amp; titles panel</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-show-needs"    ${settings.showNeedsPanel   ? 'checked' : ''}><span>Needs panel</span></label>
+      <label class="glp-row"><input type="checkbox" id="glp-show-scene"    ${settings.showScenePanel!==false ? 'checked' : ''}><span>Scene panel</span></label>
+      <label class="glp-row"><input type="checkbox" id="glp-show-party"    ${settings.showPartyPanel!==false ? 'checked' : ''}><span>Party panel</span></label>
+      <div class="glp-section-label">Narrative Header</div>
+      <label class="glp-row"><input type="checkbox" id="glp-hdr-enabled"   ${settings.headerEnabled!==false ? 'checked' : ''}><span>Prepend status header to GM messages</span></label>
+      <label class="glp-row"><input type="checkbox" id="glp-hdr-block"     ${settings.headerUseFormatBlock!==false ? 'checked' : ''}><span>Use [HEADER_FORMAT] block when present</span></label>
+      <label class="glp-row"><input type="checkbox" id="glp-hdr-every"     ${settings.headerShowOnEveryMsg!==false ? 'checked' : ''}><span>Show on every GM message</span></label>
+      <div class="glp-field-setting">
+        <label for="glp-hdr-sep">Header separator</label>
+        <input type="text" id="glp-hdr-sep" class="text_pole" value="${(settings.headerSeparator ?? '---')}">
+      </div>
+      <div class="glp-field-setting">
+        <label for="glp-hdr-manual">Manual header format (fallback)</label>
+        <textarea id="glp-hdr-manual" class="text_pole" rows="2" placeholder="{name}  HP {hp}/{hp_max}  {conditions}  {time}">${settings.headerManualFormat || ''}</textarea>
+      </div>
       <div class="glp-field-setting">
         <label for="glp-plot-lorebook">Plot Lorebook (optional)</label>
         <select id="glp-plot-lorebook" class="text_pole"><option value="">— auto (campaign-plot) —</option>${opts}</select>
@@ -384,8 +414,9 @@ async function renderSettingsPanel() {
         <div class="glp-field-setting"><label>Rule order</label><input  type="number" id="glp-rule-order"  class="text_pole" min="1" max="999" value="${settings.ruleOrder}"></div>
       </div>
       <div class="glp-info">
-        <b>v0.0.10 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
+        <b>v0.0.11 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
         <b>Capability progression</b> is configurable per category via named profiles: none · counter · use_tracked · points_tiers · xp_levels · milestone (Veridia PP/tier = the built-in <i>veridia_pp</i>).<br>
+        <b>Party &amp; scene</b> rosters, <b>GM realism directives</b>, and a built-in <b>narrative header</b> (merged from gm-narrative-header) are always-on backstops: only <b>[System Definition]</b>, <b>[GM Directives]</b>, <b>[Scene]</b>, <b>[Party]</b> and NPC core memories stay in context; everything else is keyword-triggered.<br>
         <b>Detailed mechanics</b> surface on demand as keyword-triggered <b>[System Rule]</b> lorebook entries (keys derived from the def's own vocabulary); <b># commands</b> are derived from the def and reshapeable via its <code>commands:</code> section.<br>
         <b>Add a block type:</b> register tags in modules/state.js + add a handler in the relevant module + dispatch in index.js.
       </div>
@@ -410,6 +441,13 @@ async function renderSettingsPanel() {
     $('#glp-show-currency').on('change', function() { getSettings().showCurrencyPanel = this.checked; refreshStatusPanel(); save(); });
     $('#glp-show-boons').on('change',    function()  { getSettings().showBoonPanel    = this.checked; refreshStatusPanel(); save(); });
     $('#glp-show-needs').on('change',    function()  { getSettings().showNeedsPanel   = this.checked; refreshStatusPanel(); save(); });
+    $('#glp-show-scene').on('change',    function()  { getSettings().showScenePanel   = this.checked; refreshStatusPanel(); save(); });
+    $('#glp-show-party').on('change',    function()  { getSettings().showPartyPanel   = this.checked; refreshStatusPanel(); save(); });
+    $('#glp-hdr-enabled').on('change',   function()  { getSettings().headerEnabled        = this.checked; save(); });
+    $('#glp-hdr-block').on('change',     function()  { getSettings().headerUseFormatBlock = this.checked; save(); });
+    $('#glp-hdr-every').on('change',     function()  { getSettings().headerShowOnEveryMsg = this.checked; save(); });
+    $('#glp-hdr-sep').on('change',       function()  { getSettings().headerSeparator      = this.value;   save(); });
+    $('#glp-hdr-manual').on('change',    function()  { getSettings().headerManualFormat   = this.value;   save(); });
     $('#glp-plot-lorebook').on('change', function() { getSettings().plotLorebook      = this.value;   save(); });
     $('#glp-inject-ctx').on('change', function()    { getSettings().injectIntoContext = this.checked; injectCharacterContext(); save(); });
     $('#glp-inject-res').on('change', function()    { getSettings().injectResolution = this.checked; injectCharacterContext(); save(); });
@@ -504,6 +542,10 @@ function mountGlpDrawer() {
     // Inventory item → popup its [Item] lorebook entry (delegated; survives re-renders).
     $(document).off('click.glpInvItem').on('click.glpInvItem', '.glp-inv-item', function () {
         if (typeof glpShowItemPopup === 'function') glpShowItemPopup($(this).attr('data-item'));
+    });
+    // Party/scene member → popup their NPC/companion/creature entry.
+    $(document).off('click.glpMember').on('click.glpMember', '.glp-member', function () {
+        if (typeof glpShowMemberPopup === 'function') glpShowMemberPopup($(this).attr('data-member'));
     });
 }
 

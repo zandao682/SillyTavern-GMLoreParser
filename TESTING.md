@@ -1,24 +1,24 @@
-# Test Plan — gm-lore-parser & gm-narrative-header
+# Test Plan — gm-lore-parser
 
-A comprehensive **manual** test plan for both extensions, run by hand in SillyTavern using the **Test Harness** card (`test-harness-card.json`). Nothing here is automated — the extensions only run inside SillyTavern.
+A comprehensive **manual** test plan, run by hand in SillyTavern using the **Test Harness** card (`test-harness-card.json`). Nothing here is automated — the extension only runs inside SillyTavern. The narrative header is now built into gm-lore-parser (the former standalone `gm-narrative-header` extension is deprecated and must be disabled/removed, or headers double-prepend).
 
 ---
 
 ## 1. Purpose & scope
 
-Exercise every block type, `#` command, System-Definition section, status-panel section, context-injection path, lorebook side effect, and the narrative-header tokens — plus cross-cutting behavior (feature gating, persistence, formula safety) and regression/edge cases.
+Exercise every block type, `#` command, System-Definition section, status-panel section, context-injection path, lorebook side effect, the party/scene rosters, GM behavioral directives, the always-on lorebook audit, and the built-in narrative-header tokens — plus cross-cutting behavior (feature gating, persistence, formula safety) and regression/edge cases.
 
 ## 2. Prerequisites / setup
 
 | # | Step | Verify |
 |---|------|--------|
-| P1 | Install both extensions under `…/extensions/third-party/`, reload ST. | Console: `[gm-lore-parser] v0.0.10 loaded…` and `[gm-narrative-header] v0.0.3 loaded.`; both drawers appear under Extensions. |
+| P1 | Install gm-lore-parser under `…/extensions/third-party/`, reload ST. **Disable/remove the standalone gm-narrative-header** if present. | Console: `[gm-lore-parser] v0.0.11 loaded…` listing modules incl. `scene, header`; its drawer appears under Extensions; no `[gm-narrative-header]` active-load line. |
 | P2 | World Info → create lorebook **`harness-campaign`** (empty). | Appears in World Info. |
 | P3 | gm-lore-parser settings → **Campaign Lorebook = `harness-campaign`**. | Persists across reload. |
 | P4 | gm-lore-parser settings: Enabled ✔, Hide raw blocks ✔, Toasts ✔, Intercept # commands ✔, Inject into context ✔, Inject resolution ✔, all panels ✔, Scan user messages ✘. | Checkboxes match. |
 | P5 | Import **`test-harness-card.json`** (Characters → Import). Start a new chat with it. | Greeting menu shows. |
 | P6 | Ensure `harness-campaign` is active for this chat (World Info → active, or rely on auto-link). | Lorebook in chat's active set. |
-| P7 | gm-narrative-header settings: Enabled ✔, Prepend to every GM message ✔, Use HEADER_FORMAT block ✔, separator `---`, manual format blank. | Persists. |
+| P7 | gm-lore-parser settings → **Narrative Header** sub-section: Enabled ✔, Show on every message ✔, Use `[HEADER_FORMAT]` block ✔, separator `---`, manual format blank. Scene panel ✔, Party panel ✔. | Persists across reload. |
 
 > **Critical:** Most lore blocks and SYSTEM_DEF persistence **no-op without a campaign lorebook** (`index.js` gates `LORE_BLOCKS`/`UPDATE_BLOCKS` on `settings.campaignLorebook`). Always run **SD-01 first** — nearly everything reads `getSystemDef()` and feature gating.
 
@@ -41,6 +41,8 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 | SD-RULE-01 | SD-01 | After `emit: system_def default`, inspect `harness-campaign` | Keyword-triggered (NON-constant) `[System Rule]` entries exist (Resolution, Capabilities, Reputation, Ranks, Companions, Needs, Progression). Each entry's `key` list is derived from the def's vocabulary (e.g. Capabilities keys include the category names + tier names `novice…god`; Reputation keys include `hostile…sworn`). The always-on `[System Definition]` summary stays terse (no full difficulty table). |
 | SD-RULE-02 | SD-RULE-01 | `emit: system_def minimal_skill` (reputation/ranks off) | `[System Rule] Reputation` and `[System Rule] Ranks` are pruned from the lorebook; Capabilities + Progression rules remain. |
 | SD-PROG-01 | P1–P6 | `emit: system_def custom_progression` (a profile of `type: counter` mapped to the skill category), then `emit: capability skill "Tracking"` + `emit: capability_update "Tracking" level:3` | Tracking advances as a flat counter to Lv3 (no PP/tiers); a static `none` capability declared alongside never changes level/score. |
+| SD-DIR-01 | SD-01 | After `emit: system_def default`, inspect `harness-campaign` | A **constant** `[GM Directives]` entry exists with the four default directives as terse bullets (knowledge-scoping, no-auto-bond, player-can-fail, player-agency). Keys `gm directives`, `directives`. |
+| SD-DIR-02 | P1–P6 | `emit: system_def` with a `directives:` section that sets `disable: player_agency` and overrides `knowledge_scoping:` | `[GM Directives]` re-emitted: player_agency bullet gone, knowledge_scoping shows the new text; `emit_directives: false` would suppress the entry entirely. |
 
 ### 4.2 Character creation
 | ID | Precondition | Action | Expected |
@@ -122,6 +124,18 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 |----|----|----|----|
 | DOM-01 | SD-01 | `emit: domain_update` | Domain panel shows Greywatch Hold stats; `#domain` reflects them. |
 
+### 4.13b Party & scene rosters
+| ID | Precondition | Action | Expected |
+|----|----|----|----|
+| PTY-01 | SD-01 | `emit: party_update add` (Ember, Garrick Stone) | `chatMetadata['gm-lore-parser'].party` has both members; a **constant** `[Party]` entry (keys `party`/`the party`/`group`) lists them terse (name — role); Party panel section shows them. |
+| PTY-02 | PTY-01 | `emit: party_update remove` ("Garrick Stone") | Garrick removed from `state.party` and the `[Party]` entry; Ember remains. |
+| PTY-03 | PTY-01 | `emit: party_update clear` | `state.party` empty; `[Party]` entry content = "Travelling alone."; panel section hides. |
+| SCN-01 | SD-01 | `emit: scene_update set` (location + two members) | `state.scene` has both, `state.scene_location` set; a **constant** `[Scene]` entry (keys `scene`/`present`/`here`) shows `Location: …` + members; Scene panel section shows them. |
+| SCN-02 | SCN-01 | `emit: scene_update enter` ("Marshal Vane") then `emit: scene_update exit` ("Ember") | Vane added, Ember removed in `state.scene` and the `[Scene]` entry; location unchanged. |
+| SCN-03 | SCN-01 | `emit: scene_update location` (new place) | `state.scene_location` updated; `[Scene]` entry's Location line changes; roster unchanged. |
+| SCN-04 | SCN-01 | `emit: scene_update clear` | `state.scene` empty, location cleared; `[Scene]` content = "No other characters present." |
+| PSC-LINK-01 | `emit: entity companion` ("Ember"), then PTY-01 | In the Party panel, the "Ember" row is clickable (`.glp-member`); clicking opens Ember's `[Companion]`/`[NPC]` lore popup. A member with no matching record is plain text. |
+
 ### 4.14 Generic lore
 | ID | Precondition | Action | Expected |
 |----|----|----|----|
@@ -135,6 +149,7 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 | CMD-help-01 | SD-01 | type `#help` | Lists only active (feature-enabled) commands. |
 | CMD-02 | `emit: system_def custom_commands`, then type `#wounds` | Renders `HP <cur>/<max> — <conditions>` via the template; `#party` aliases the companions view; built-ins `#status/#vitals/#system/#help` still present. |
 | INS-01 | EVT-01/QST-01 exist | type `#inspect Thornwall` | Returns hints referencing matching events/quests. If the player has the `def.capabilities.inspect_capability` (default "awareness"), a `<Name> tier: …` line gates detail; with no such capability (or `inspect_capability` unset) the tier line is omitted and hints show ungated. |
+| CMD-PTY-01 | PTY-01 | type `#party` | Lists the party roster locally (no model call). `#scene` / `#present` lists who is present + location. Both drop from `#help` when their feature is off. |
 
 ### 4.16 Output / misc
 | ID | Precondition | Action | Expected |
@@ -159,6 +174,7 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 | XC-PRES-01 | `emit: system_def presentation` (bar 60/30, max_pips 8, ascii 12, empty `--`), then ENT-01 + NDS | Bars recolor at the new thresholds; pools cap at 8 pips; `#needs` bars are 12 wide; empty lists show `--`. |
 | XC-HIDE-01 | hideBlocks ON; any emitted block | Rendered message shows the confirmation line only; raw `[…_BEGIN]…[…_END]` stripped. |
 | XC-PANEL-01 | Toggle "Reputation panel" OFF | That panel section disappears immediately; others remain. |
+| XC-CONST-01 | After SD-01 + SD-DIR-01 + PTY-01 + SCN-01 + an NPC with a core memory, inspect `harness-campaign` | **Exactly** these entries are `constant:true`: `[System Definition]`, `[GM Directives]`, `[Scene]`, `[Party]`, and NPC **core** memories. Everything else (`[System Rule]`, items, locations, factions, quests, world events, capabilities, episodic memories, NPC state/progression) is keyword-triggered (`constant:false`). |
 | XC-SET-01 | scanUserMessages ON; type a **user** message containing `[CURRENCY_UPDATE…]` | Currency block in a user message is **not** processed (only player `[ENTITY_BEGIN]` + `#` commands are). Documents actual behavior — a deviation is a bug. |
 
 ---
@@ -183,22 +199,25 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 
 ---
 
-## 7. Header extension (gm-narrative-header)
+## 7. Narrative header (built-in)
+
+The header is built into gm-lore-parser (`modules/header.js`). Settings live in the gm-lore-parser **Narrative Header** sub-section; the captured format is stored on `getCharState().header_format`. The standalone gm-narrative-header is deprecated — confirm it is disabled (HDR-DUP-01).
 
 | ID | Precondition | Action | Expected |
 |----|----|----|----|
-| HDR-01 | ENT-01 done; header enabled | `emit: header_format basic` | Block stripped; `chatMetadata['gm-narrative-header'].format` stored; the **next** GM message is prepended with the rendered header + `---`. |
+| HDR-01 | ENT-01 done; header enabled | `emit: header_format basic` | Block stripped; `getCharState().header_format` stored; the **next** GM message is prepended with the rendered header + `---`. |
 | HDR-02 | HDR-01 | `emit: noop` (any GM message) | Header shows live values: name, `HP cur/max`, conditions or empty-label, time. |
-| HDR-03 | Fresh chat, no lore-parser state, header on, manual format set | any GM message | Tokens resolve to `{token}`/`—`/empty-label — graceful degradation. |
-| HDR-04 | HDR-01; `showOnEveryMsg` OFF | GM message with no HEADER_FORMAT block | Header **not** prepended; only block-bearing messages render it. |
-| HDR-05 | Player + skills + faction + needs exist | `emit: header_format full` | Every token resolves to a live value or its fallback (`?`/`—`/empty-label/`0`); `{inventory_max}` uses `system_def.inventory.capacity` when set. |
-| HDR-06 | useFormatBlock OFF, manualFormat set | GM message | Manual format used instead of the captured block. |
+| HDR-03 | Fresh chat, no parser state, header on, manual format set | any GM message | Tokens with no data resolve to **nothing** (never literal `{token}`); a line with only-empty tokens is dropped — graceful degradation. |
+| HDR-04 | HDR-01; Show-on-every-message OFF | GM message with no HEADER_FORMAT block | Header **not** prepended; only block-bearing messages render it. |
+| HDR-05 | Player + skills + faction + needs + party/scene exist | `emit: header_format full` | Every present token resolves to a live value (or empty → its line/segment drops); `{inventory_max}` uses `system_def.inventory.capacity` when set; `{party}`/`{scene}` resolve to member names. |
+| HDR-06 | Use-`[HEADER_FORMAT]`-block OFF, manual format set | GM message | Manual format used instead of the captured block. |
+| HDR-DUP-01 | Standalone gm-narrative-header **disabled** | `emit: header_format basic` then `emit: noop` | Header prepended exactly **once** (no double header). With the standalone still enabled it double-prepends — that confirms it must be removed. |
 
 ---
 
 ## 8. Teardown
 
-Delete `harness-campaign`, `harness-campaign-plot`, and any `location-*` / `npc-*` lorebooks; delete the harness chat; disable both extensions if moving on.
+Delete `harness-campaign`, `harness-campaign-plot`, and any `location-*` / `npc-*` lorebooks; delete the harness chat; disable the extension if moving on.
 
 ---
 
@@ -226,15 +245,18 @@ Delete `harness-campaign`, `harness-campaign-plot`, and any `location-*` / `npc-
 | LOCATION / LOCATION_MEMORY | LOC-01 |
 | RULE / EVENT | LORE-RULE-01, LORE-EVT-01 |
 | NEEDS_SYSTEM / NEEDS_UPDATE | NDS-01, NDS-02 |
+| PARTY_UPDATE / SCENE_UPDATE | PTY-01…PTY-03, SCN-01…SCN-04, PSC-LINK-01 |
+| GM Directives (`directives:` / `[GM Directives]`) | SD-DIR-01, SD-DIR-02 |
+| Always-on audit (constant entries) | XC-CONST-01 |
 | CHAR_CREATE begin/step/finalize | CC-01, CC-02 |
 | CARD_OUTPUT / COMMAND_RESPONSE | OUT-01, OUT-02, CMD-01 |
-| HEADER_FORMAT | HDR-01…HDR-06 |
+| HEADER_FORMAT | HDR-01…HDR-06, HDR-DUP-01 |
 
-**Commands → test IDs:** `#status/#character`→CMD-01; `#vitals`→TIM-01; `#skills`→CAP-PRG-01; `#inventory/#bag`→ENT-01; `#equipment`→POS-01; `#itembox`→POS-BOX-01; `#domain`→DOM-01; `#time`→TIM-01; `#quests`→QST-01; `#rep/#reputation`→REP-02; `#factions`→REP-01; `#events`→EVT-01; `#locations`→LOC-01; `#currency/#wallet`→ECO-01; `#rank`→PRG-01; `#companions`→`emit: entity companion`+`#companions`; `#legion/#hierarchy`→REG-08; `#boons`→CAP-01; `#titles`→CAP-02; `#abilities`→CAP-EVO-01; `#needs`→NDS-01; `#inspect`→INS-01; `#system/#ruleset`→SD-01; `#help`→CMD-help-01; custom/alias→CMD-02. (`#<category>s` commands are def-derived — see CAP-01/02.)
+**Commands → test IDs:** `#status/#character`→CMD-01; `#vitals`→TIM-01; `#skills`→CAP-PRG-01; `#inventory/#bag`→ENT-01; `#equipment`→POS-01; `#itembox`→POS-BOX-01; `#domain`→DOM-01; `#time`→TIM-01; `#quests`→QST-01; `#rep/#reputation`→REP-02; `#factions`→REP-01; `#events`→EVT-01; `#locations`→LOC-01; `#currency/#wallet`→ECO-01; `#rank`→PRG-01; `#companions`→`emit: entity companion`+`#companions`; `#legion/#hierarchy`→REG-08; `#boons`→CAP-01; `#titles`→CAP-02; `#abilities`→CAP-EVO-01; `#needs`→NDS-01; `#inspect`→INS-01; `#system/#ruleset`→SD-01; `#help`→CMD-help-01; custom/alias→CMD-02; `#party`→CMD-PTY-01; `#scene/#present`→CMD-PTY-01. (`#<category>s` commands are def-derived — see CAP-01/02.)
 
 **System-Def sections → test IDs:** features→XC-GATE-01; identity/progression→REG-05; creation→CC-01; classes→`emit: system_def` w/ classes (CLS); attributes/derived/variables→XC-FORMULA-01/REG-04; reputation→REP-01; capabilities/progressions→CAP-PRG-01/SD-PROG-01; rank_ladder→PRG-01; needs→NDS-02; item_conditions→POS-ITEM-01/REG-11; loyalty→companion tests; resolution→XC-RES-01; rules/emit_rule_entries→SD-RULE-01/02; quests/world_events/factions/companions/capabilities vocab→QST-01/EVT-01/REP-01/REG-08/CAP-01; inventory→POS-BOX-01; equipment→POS-01; locations(+instances)→LOC-01; commands→CMD-02; presentation→XC-PRES-01.
 
-**Header tokens → test IDs:** identity/`{rank}`→HDR-02/05; `{field}/{field_max}/{field_regen}/{field_pct}`→HDR-02/05; `{time}/{date}`→HDR-02; `{conditions}`→HDR-02; `{inventory_count}/{inventory_max}`→HDR-05; `{active_title}/{titles}/{boons}/{abilities}`→HDR-05 (resolve against `state.capabilities`); `{currency}/{currency:denom}`→HDR-05; `{reputation:Faction}`→HDR-05; `{skill_score:Skill}`→HDR-05 (reads the capability's precomputed `prog.score`); `{xp_next}`→HDR-05.
+**Header tokens → test IDs:** identity/`{rank}`→HDR-02/05; `{field}/{field_max}/{field_regen}/{field_pct}`→HDR-02/05; `{time}/{date}`→HDR-02; `{conditions}`→HDR-02; `{inventory_count}/{inventory_max}`→HDR-05; `{active_title}/{titles}/{boons}/{abilities}`→HDR-05 (resolve against `state.capabilities`); `{currency}/{currency:denom}`→HDR-05; `{reputation:Faction}`→HDR-05; `{skill_score:Skill}`→HDR-05 (reads the capability's precomputed `prog.score`); `{party}/{scene}`→HDR-05; `{xp_next}`→HDR-05.
 
 ---
 
@@ -249,4 +271,4 @@ Delete `harness-campaign`, `harness-campaign-plot`, and any `location-*` / `npc-
 7. **Derived stats only fill unset/zero targets** — the harness leaves hp/mp/vigor blank deliberately.
 8. **NPC values are reconstructed from lorebook text** — verify NPC tests via the three `[NPC…]` entries' content, not chatMetadata.
 
-The block catalogue inside `test-harness-card.json` duplicates the live protocol; if the extension protocol changes, regenerate the catalogue (canonical templates: `system-designer-card.json`). The harness stamps `protocol_version 0.0.10`.
+The block catalogue inside `test-harness-card.json` duplicates the live protocol; if the extension protocol changes, regenerate the catalogue (canonical templates: `system-designer-card.json`). The harness stamps `protocol_version 0.0.11`.

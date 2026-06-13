@@ -2,7 +2,7 @@
 
 A SillyTavern extension that automates campaign record-keeping for AI-run tabletop RPGs. The GM (or the Architect that designs a game) emits structured blocks at the end of messages; the extension parses them and maintains the ruleset, character/NPC/companion state, lorebooks, capabilities, world time, and more — automatically.
 
-**Version:** 0.0.9 (beta)
+**Version:** 0.0.11 (beta)
 **Requires:** SillyTavern 1.12.0+
 
 It is system-agnostic: a single `[SYSTEM_DEF]` block defines the ruleset (which subsystems exist, attributes, derived-stat formulas, progression model, optional classes, reputation/skill/needs settings, conflict resolution, and more). Player, NPC, Companion, and Creature share one stat-block engine via the unified `[ENTITY]` family; Boons/Titles/Passives/Evolution/Skills are one `[CAPABILITY]` concept with configurable progression. Levels, XP, classes, capabilities, reputation, needs, and the other subsystems are all opt-in — a classless, levelless, skill-based system is fully supported.
@@ -14,13 +14,13 @@ It is system-agnostic: a single `[SYSTEM_DEF]` block defines the ruleset (which 
 The extension is a single entry point (`index.js`) that loads `modules/` in order:
 
 ```
-state · utils · lorebook · system · schema · entity ·
+state · utils · lorebook · system · schema · entity · scene ·
 progression · inventory · capabilities · domain · lore · sheet · creation ·
-quests · reputation · events · currency · needs ·
+quests · reputation · events · currency · needs · header ·
 commands · panel · context
 ```
 
-Companions (loyalty / control / AP / legion) live in `companions.js` as a companion entity-type module; rank ladders + XP in `progression.js`; equipment slots / inventory model / item box in `inventory.js`. `currency.js` is pure wealth.
+Companions (loyalty / control / AP / legion) are a `type:` of the unified engine in `entity.js`; party/scene rosters live in `scene.js`; rank ladders + XP in `progression.js`; equipment slots / inventory model / item box in `inventory.js`; `currency.js` is pure wealth; the in-narrative status header is `header.js` (merged from the former standalone `gm-narrative-header` extension).
 
 To add a block type: register its tags in `modules/state.js`, write a handler in the relevant module, and dispatch it in `index.js` `onMessageReceived`.
 
@@ -53,7 +53,7 @@ The system definition is cached per chat and re-hydrated from the lorebook on ch
 [SYSTEM_DEF_BEGIN]
 name: Veridia
 
-features: capabilities, ranks, reputation, currency, needs, companions, domains, quests, world_events
+features: capabilities, ranks, reputation, currency, needs, companions, party, scene, domains, quests, world_events
 
 identity:
   class | Class
@@ -154,6 +154,12 @@ rules:
     keywords: parry, riposte
     content: Override prose for the [System Rule] Resolution entry.
 
+emit_directives: true                         # emit the constant [GM Directives] entry (default true)
+directives:
+  disable: player_agency                      # drop a built-in directive by id
+  knowledge_scoping: Characters know only what they have personally seen or been told.
+  custom_grit: Wounds linger; healing is slow and costs resources.
+
 inventory:
   model: slots            # freeform | slots | weight
   capacity: 30
@@ -183,7 +189,7 @@ commands:
 
 **Every section is optional** and merges over the built-in defaults:
 
-- `features:` — a comma list of the **enabled** subsystems (capabilities, ranks, reputation, currency, needs, companions, domains, quests, world_events, equipment). Anything omitted is disabled: its blocks no-op, its panel section hides, its context injection is suppressed, and its commands drop out. Omit the whole section to keep all features on.
+- `features:` — a comma list of the **enabled** subsystems (capabilities, ranks, reputation, currency, needs, companions, party, scene, domains, quests, world_events, equipment). Anything omitted is disabled: its blocks no-op, its panel section hides, its context injection is suppressed, and its commands drop out. Omit the whole section to keep all features on.
 - `progression:` — `levels:false`/`xp:false` produce a levelless / XP-less system. `level` is exposed to formulas only when `levels:true`.
 - `identity:` / `classes:` — declared identity fields (class/background/race) and an optional class catalogue (modifiers + granted skills/abilities; same shape serves races/backgrounds).
 - `attributes:` / `derived:` — `key | label | abbr` rows and `key = formula -> target[, also…]` rows, evaluated with a strict arithmetic-only whitelist (no code execution).
@@ -192,6 +198,7 @@ commands:
 - `progressions:` — named progression profiles a capability can reference. Each `profile: <id> | <type>` with `type ∈ none | counter | use_tracked | points_tiers | xp_levels | milestone` and optional `tier_names` / `levels_per_tier` / `cost_formula` / `score_formula`. The Veridia PP/tier model is the built-in `veridia_pp` profile — author your own for other systems.
 - `resolution:` — documents how checks are resolved (d20 vs DC, d100 roll-under, dice pool, 2d6+mod, …). The extension never rolls; this is injected into context so the GM resolves checks consistently. The terse mechanic line is always-on; the full difficulty table moves to the keyword-triggered `[System Rule] Resolution` entry.
 - `rules:` — optional per-rule overrides for the keyword-triggered `[System Rule]` entries. Each `rule: <id>` may set `keywords:` (added to the def-derived trigger words) and `content:` (replaces the derived prose). `emit_rule_entries: false` suppresses these entries entirely.
+- `directives:` / `emit_directives:` — the always-on **GM behavioral directives** (realism guardrails). Four ship by default — `knowledge_scoping` (characters know only what they witnessed or were told), `no_auto_bond` (NPC attitudes are earned, not automatic), `player_can_fail` (the resolution mechanic is honored; success isn't guaranteed), `player_agency` (the GM never decides the PC's choices). The `directives:` section overrides a directive's text by id (`knowledge_scoping: <new text>`), adds a custom one (`<custom_id>: <text>`), or drops some with `disable: id1, id2`. They are emitted as a single constant `[GM Directives]` lorebook entry (always in context); `emit_directives: false` suppresses it. The Architect also embeds them in produced GM cards when the designed system calls for it.
 - **Vocabularies** — `quests`, `world_events`, `factions`, `companions`, `capabilities` let a system rename statuses/categories/roles/attitudes and their defaults.
 - **Possessions** — `inventory` (model `freeform`/`slots`/`weight` + `capacity`/`unit`, optional `item_box`) and `equipment` (system-defined `slot:` set, gated by `features.equipment`).
 - `locations:` — location `types`, whether discovery auto-creates a per-location history lorebook, and an optional `instances` subtype (only when `instance.enabled`).
@@ -341,6 +348,36 @@ branch: Riposte             # optional branch unlock
 
 ---
 
+## Party & Scene rosters
+
+Two lightweight, **always-on** membership lists — separate from the companions sub-game (which tracks loyalty/control/AP). **Party** = who is travelling with the player; **Scene** = who is physically present right now, plus an optional location. They persist in chat state and are surfaced as **constant** `[Party]` / `[Scene]` lorebook entries, so the GM never loses track of the cast across large context shifts. A roster member whose name matches a companion/NPC record links to it in the status panel.
+
+```
+[PARTY_UPDATE_BEGIN]
+add: Ember | healer (childhood friend)   # repeatable; role/note optional
+remove: Garrick Stone
+clear: true
+[PARTY_UPDATE_END]
+
+[SCENE_UPDATE_BEGIN]
+location: The Broken Tankard
+set: Garrick Stone | barkeep, Ember | healer   # replace the whole present-roster
+enter: Marshal Vane | Iron Concord officer     # add one (alias: add)
+exit: Ember                                     # remove one (alias: remove)
+clear: true                                     # clear roster + location
+[SCENE_UPDATE_END]
+```
+
+Entries are kept terse (names + role) because they are always in context. View them with `#party` and `#scene` / `#present` (def-reshapeable like any other command). Gated by the `party` / `scene` features (both on by default).
+
+---
+
+## GM behavioral directives
+
+Realism guardrails that survive long context. Configured in the System Definition's `directives:` / `emit_directives:` sections (see above) and emitted as a single constant `[GM Directives]` lorebook entry. They keep the GM honest: NPCs know only what they've witnessed, attitudes are earned rather than automatic, the player can genuinely fail, and the GM never seizes the PC's agency. The Architect embeds the same directives in the GM cards it produces when the designed system calls for them, so they are present whether or not the lorebook entry is.
+
+---
+
 ## Other blocks (gated by `features`)
 
 - **Capability progression** — `[CAPABILITY_UPDATE]` awards points / sets levels and advances tiers per the capability's progression profile (from `progressions:` in the system definition).
@@ -384,6 +421,8 @@ Players type `#` commands that are answered locally, without calling the model. 
 | currency | `#currency` / `#wallet` | Wallet and denominations |
 | rank | `#rank` | Guild / adventurer rank |
 | companions / legion | `#companions [name]`, `#legion` / `#hierarchy` | Roster / delegation tree |
+| party | `#party` | Who is travelling with the player |
+| scene | `#scene` / `#present` | Who is present now (+ location) |
 | capability (per category) | `#<category>s` — e.g. `#boons`, `#titles` | One view per capability category (def-derived) |
 | skills / abilities | `#skills`, `#abilities` | Progressing capabilities / static capabilities |
 | needs | `#needs` | Life-simulation meters |
@@ -410,7 +449,47 @@ Template tokens include `{name}` `{class}` `{rank}` `{field}` `{field_max}` `{fi
 
 ## Status panel
 
-A live, schema-driven panel renders above the chat input: identity + active title, grouped fields (bars/values/pools/lists), and collapsible sections for needs, capabilities (static + progressing), domains, quests, reputation, world events, currency, rank, companions, and equipment & inventory. During an active creation session it shows the creation step checklist instead. Disabled features and empty sections are hidden.
+A live, schema-driven panel renders above the chat input: identity + active title, grouped fields (bars/values/pools/lists), and collapsible sections for **scene** and **party** rosters, needs, capabilities (static + progressing), domains, quests, reputation, world events, currency, rank, companions, and equipment & inventory. During an active creation session it shows the creation step checklist instead. Disabled features and empty sections are hidden. The panel lives in a pinnable top-bar left drawer.
+
+---
+
+## Narrative header
+
+A formatted status header can be prepended to each GM message, in-narrative (merged from the former standalone `gm-narrative-header` extension — that extension is now deprecated and should be disabled, or both will double-prepend). The format is authored once via a `[HEADER_FORMAT]` block (captured per chat) or typed into settings as a manual format:
+
+```
+[HEADER_FORMAT_BEGIN]
+{name} | {class} | Rank {rank}
+HP {hp}/{hp_max} ({hp_regen}/min)   MP {mp}/{mp_max}
+Scene: {scene}   Party: {party}
+Title: {active_title}   Coin: {currency}
+[HEADER_FORMAT_END]
+```
+
+Tokens resolve against the live character state. **A token with no data resolves to nothing** (never a literal `{token}`), a line whose tokens *all* resolve empty is dropped, and leftover artifacts (orphan `/`, empty `()`, stray separators) are tidied — so one-stat-per-line formats hide cleanly.
+
+| Token | Resolves to |
+|---|---|
+| `{name}` `{class}` `{background}` `{rank}` | Identity fields |
+| `{time}` / `{date}` | Current in-world time |
+| `{conditions}` | Active conditions (or the empty label) |
+| `{inventory_count}` `{inventory_max}` | Inventory size / capacity |
+| `{active_title}` `{titles}` `{boons}` `{abilities}` | Capabilities by category |
+| `{party}` `{scene}` | Roster member names |
+| `{currency}` `{currency:gold}` | Wallet summary / one denomination |
+| `{reputation:Name}` | A faction's tier + standing |
+| `{skill_score:Name}` | A progressing capability's score |
+| `{xp_next}` | XP to next level |
+| `{<field>}` | Any schema/needs field value |
+| `{<field>_max}` `{<field>_regen}` `{<field>_pct}` | A field's max / regen-per-min / percent-of-max |
+
+Header settings: enable/disable, prefer the `[HEADER_FORMAT]` block vs. the manual format, the separator string between header and narrative, and whether to render on every message or only when a fresh format block arrives.
+
+---
+
+## Always-on vs. keyword-triggered lorebook entries
+
+Only a handful of entries are **constant** (always in context): `[System Definition]` (terse summary), `[GM Directives]`, `[Scene]`, `[Party]`, and each NPC's **core** memories. Everything else is **keyword-triggered** so it loads only when relevant — items, locations, factions, quests, world events, capabilities, `[System Rule]` entries, episodic memories, and NPC state/progression. This keeps the always-on context small while the bulk of campaign lore stays a keyword away.
 
 ---
 
@@ -419,7 +498,7 @@ A live, schema-driven panel renders above the chat input: identity + active titl
 | Lorebook | Created by | Contains |
 |---|---|---|
 | GM card embedded book | card author / Architect | Block-protocol reminder + system rules |
-| Campaign lorebook | extension | `[System Definition]` (constant), `[System Rule]` entries (keyword-triggered), NPC core/state/progression, creatures, factions+reputation, items, capabilities, quests, world events, locations, rules, events |
+| Campaign lorebook | extension | `[System Definition]` / `[GM Directives]` / `[Scene]` / `[Party]` (constant), `[System Rule]` entries (keyword-triggered), NPC core/state/progression, creatures, factions+reputation, items, capabilities, quests, world events, locations, rules, events |
 | `npc-{slug}` lorebooks | extension (auto) | Per-NPC memories — core (constant) + episodic (keyword-triggered) |
 
 **Keyword triggering.** Keyword-triggered entries load into context only when the chat mentions one of their keys. The parser normalizes every key set (trim, lowercase, dedup) and, when you don't supply explicit `keywords:`, derives them from the entry's name via `expandNameKeys`: the full lowercased name plus a conservative significant sub-phrase (e.g. "The Lost Heir" also triggers on "lost heir"), never bare common words. `[System Rule]` entries derive their keys from the System Definition's own vocabulary (tier names, rank labels, attitudes, need meters, dice tokens…). When you do supply `keywords:`, give 2–5 specific, distinctive terms and avoid generic words, which over-trigger.
@@ -436,17 +515,23 @@ A live, schema-driven panel renders above the chat input: identity + active titl
 | Show toast notifications | on | Notices on saves and stat changes |
 | Scan user messages | off | Also parse blocks in player messages |
 | Intercept # commands | on | Answer `#` commands locally |
-| Panel toggles | on | Status / capabilities (skill + boon sub-sections) / domain / quests / reputation / events / currency / needs panels (a panel also hides when its feature is disabled in the system definition) |
+| Panel toggles | on | Scene / party / status / capabilities (skill + boon sub-sections) / domain / quests / reputation / events / currency / needs panels (a panel also hides when its feature is disabled in the system definition) |
+| Pin panel | off | Keep the status-panel drawer pinned open |
 | Inject into context | on | Character state in Author's Note position |
 | Context injection depth | 1 | Messages from bottom where state injects |
 | Inject resolution | on | Prepend the system's conflict-resolution mechanic to context |
 | Scan / lore / rule order | 4 / 100 / 50 | Lorebook scan depth and entry ordering |
+| **Narrative header** | on | Prepend an in-narrative status header to GM messages |
+| Use `[HEADER_FORMAT]` block | on | Prefer the captured format block over the manual format |
+| Header separator | `---` | String placed between the header and the narrative |
+| Show on every message | on | Render every message vs. only when a fresh format block arrives |
+| Manual header format | — | Fallback format string when no block is captured |
 
 ---
 
 ## Testing
 
-A full manual test plan covering both extensions lives in [`TESTING.md`](TESTING.md). It is exercised with the **Test Harness** card (`test-harness-card.json`) — a deterministic block emitter: import it, type `emit: <block>` (e.g. `emit: entity player`) and the reply carries exactly that block so the parser processes it. `emit: scenario smoke` runs a one-turn end-to-end smoke check. Blocks are only parsed in AI messages, which is why the harness is a character card rather than copy-paste snippets.
+A full manual test plan lives in [`TESTING.md`](TESTING.md). It is exercised with the **Test Harness** card (`test-harness-card.json`) — a deterministic block emitter: import it, type `emit: <block>` (e.g. `emit: entity player`) and the reply carries exactly that block so the parser processes it. `emit: scenario smoke` runs a one-turn end-to-end smoke check. Blocks are only parsed in AI messages, which is why the harness is a character card rather than copy-paste snippets.
 
 ---
 

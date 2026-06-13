@@ -17,11 +17,12 @@
  */
 
 var SYSTEM_DEF_COMMENT = '[System Definition]';
+var GM_DIRECTIVES_COMMENT = '[GM Directives]';
 var FORMULA_SAFE_RE    = /^[\d\s+\-*/().]+$/;
 
 var ALL_FEATURES = [
     'capabilities', 'ranks', 'reputation', 'currency', 'needs',
-    'companions', 'domains', 'quests', 'world_events', 'equipment',
+    'companions', 'party', 'scene', 'domains', 'quests', 'world_events', 'equipment',
 ];
 
 var DEFAULT_SYSTEM_DEF = Object.freeze({
@@ -29,9 +30,18 @@ var DEFAULT_SYSTEM_DEF = Object.freeze({
     schema_version: 6,
     emit_rule_entries: true,         // generate keyword-triggered [System Rule] lorebook entries
     rules: null,                     // optional per-rule author overrides (keys/content); null → derived defaults
+    emit_directives: true,           // emit a constant [GM Directives] lorebook entry (realism guardrails)
+    // Always-on GM behavioral directives (terse imperatives). Override/disable via
+    // a `directives:` section in [SYSTEM_DEF]. Kept short because they are constant.
+    directives: Object.freeze([
+        Object.freeze({ id: 'player_agency',    text: 'Control only the world and NPCs — never the player character’s decisions, words, or actions. Present choices and consequences; let the player decide.' }),
+        Object.freeze({ id: 'knowledge_scoping', text: 'Each character knows ONLY what they have personally witnessed or been told. Never let an NPC reference lore, events, or facts they could not know; the campaign lorebook is the GM’s reference, not common knowledge.' }),
+        Object.freeze({ id: 'no_auto_bond',     text: 'NPCs do not automatically like, trust, or bond with the player. Attitudes are earned through actions and roleplay; many begin neutral, wary, or hostile and can sour.' }),
+        Object.freeze({ id: 'player_can_fail',  text: 'The player can fail. Resolve actions by the system’s mechanic with real stakes and uncertain outcomes; do not guarantee success or steer toward favorable results.' }),
+    ]),
     features: Object.freeze({
         capabilities: true, ranks: true, reputation: true, currency: true, needs: true,
-        companions: true, domains: true, quests: true, world_events: true,
+        companions: true, party: true, scene: true, domains: true, quests: true, world_events: true,
     }),
     identity: Object.freeze({
         fields: Object.freeze([
@@ -243,6 +253,26 @@ function parseSystemDef(raw) {
     if (sec.name) parsed.name = sec.name.inline || sec.name.lines.join(' ') || DEFAULT_SYSTEM_DEF.name;
 
     if (sec.emit_rule_entries) parsed.emit_rule_entries = _bool(sec.emit_rule_entries.inline, true);
+    if (sec.emit_directives)   parsed.emit_directives   = _bool(sec.emit_directives.inline, true);
+
+    // directives: override/extend the always-on GM behavioral directives.
+    //   <id>: <text>         → replace/add a directive's text
+    //   disable: id1, id2    → drop those default directives
+    if (sec.directives) {
+        const base = {};
+        for (const d of DEFAULT_SYSTEM_DEF.directives) base[d.id] = d.text;
+        const disabled = new Set();
+        for (const l of sec.directives.lines) {
+            const c = l.indexOf(':'); if (c === -1) continue;
+            const k = l.slice(0, c).trim().toLowerCase().replace(/\s+/g, '_');
+            const v = l.slice(c + 1).trim();
+            if (k === 'disable') { for (const id of _csv(v)) disabled.add(id.toLowerCase().replace(/\s+/g, '_')); }
+            else if (v) base[k] = v;
+        }
+        parsed.directives = Object.entries(base)
+            .filter(([id]) => !disabled.has(id))
+            .map(([id, text]) => ({ id, text }));
+    }
 
     // rules: per-rule author overrides — `rule: <id>` opens an entry; indented
     // `keywords:` (added to derived keys) and `content:` (replaces derived prose).
@@ -633,6 +663,16 @@ async function saveSystemDef(def, settings) {
                 await upsertEntry(settings.campaignLorebook, re);
         }
         await pruneSystemRuleEntries(def, settings);   // drop stale rules (feature off / disabled emit)
+
+        // Always-on GM behavioral directives (realism guardrails). Constant so they
+        // survive long context; terse so the cost is minimal.
+        if (def.emit_directives !== false && (def.directives || []).length) {
+            const content = def.directives.map(d => `• ${d.text}`).join('\n');
+            const dEntry = entryBase(GM_DIRECTIVES_COMMENT, ['gm directives', 'directives'],
+                content, (settings.ruleOrder ?? 50) - 5, settings, { type: 'GM_DIRECTIVES' });
+            dEntry.constant = true;
+            await upsertEntry(settings.campaignLorebook, dEntry);
+        }
     }
     console.log(`[${MODULE_NAME}] System definition saved: ${def.name}`);
 }

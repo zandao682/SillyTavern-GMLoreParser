@@ -124,6 +124,12 @@ function buildStatusPanelHTML(state) {
         ? `<span class="glp-world-time">${state.world_time.display}</span>` : '';
 
     const settings     = getSettings();
+    const sceneHtml = settings.showScenePanel !== false && featureOn('scene') && (Object.keys(state.scene || {}).length || state.scene_location)
+        ? `<details class="glp-scene-details open"><summary>Scene</summary>
+           <div class="glp-scene-panel">${buildScenePanel(state.scene || {}, state.scene_location)}</div></details>` : '';
+    const partyHtml = settings.showPartyPanel !== false && featureOn('party') && Object.keys(state.party || {}).length
+        ? `<details class="glp-party-details open"><summary>Party</summary>
+           <div class="glp-party-panel">${buildPartyPanel(state.party || {})}</div></details>` : '';
     // One top-level collapsible section per capability category (Boons, Titles, Skills, …).
     const capabilityHtml = featureOn('capabilities') ? buildCapabilityPanelHTML(state.capabilities || {}, settings) : '';
     const domainHtml   = settings.showDomainPanel && featureOn('domains') && Object.keys(state.domains || {}).length
@@ -170,7 +176,7 @@ function buildStatusPanelHTML(state) {
             ${timeDisplay}
         </div>
         <div class="glp-groups-container">${sections || '<span class="glp-no-schema">Schema not defined.</span>'}</div>
-        ${needsHtml}${capabilityHtml}${domainHtml}${questHtml}${repHtml}${eventsHtml}${currencyHtml}${rankHtml}${companionHtml}${inventoryHtml}
+        ${sceneHtml}${partyHtml}${needsHtml}${capabilityHtml}${domainHtml}${questHtml}${repHtml}${eventsHtml}${currencyHtml}${rankHtml}${companionHtml}${inventoryHtml}
     </div>`;
 }
 

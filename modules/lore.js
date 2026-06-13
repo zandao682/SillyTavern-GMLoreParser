@@ -83,7 +83,10 @@ async function processNpcMemory(raw, settings) {
     const fields  = parseFields(raw);
     const npcName = fields.npc || fields.name;
     if (!npcName) return false;
-    const memType  = (fields.type || 'episodic').toLowerCase();
+    // In the unified [ENTITY_MEMORY] block, `type:` is the entity discriminator
+    // (npc/companion/…); the memory kind lives in `memory_type:`. Read that —
+    // reading `type` here marked every core memory as episodic (non-constant).
+    const memType  = (fields.memory_type || 'episodic').toLowerCase();
     const isCore   = memType === 'core';
     const title    = fields.title || '';
     const content  = fields.content || fields.memory || '';
@@ -254,7 +257,7 @@ async function processLocationMemory(raw, settings) {
     const fields = parseFields(raw);
     const name   = fields.location || fields.name;
     if (!name) { console.warn(`[${MODULE_NAME}] LOCATION_MEMORY missing location`); return false; }
-    const memType  = (fields.type || 'episodic').toLowerCase();
+    const memType  = (fields.memory_type || fields.type || 'episodic').toLowerCase();
     const title    = fields.title || '';
     const content  = fields.content || fields.memory || '';
     const keywords = fields.keywords ? normalizeKeys(fields.keywords.split(','))

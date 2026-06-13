@@ -59,6 +59,11 @@ var SHEET_BLOCKS = {
     CHAR_CREATE_BEGIN:    { begin: '[CHAR_CREATE_BEGIN]',    end: '[CHAR_CREATE_END]'    },
     CHAR_CREATE_STEP:     { begin: '[CHAR_CREATE_STEP_BEGIN]', end: '[CHAR_CREATE_STEP_END]' },
     CHAR_CREATE_FINALIZE: { begin: '[CHAR_CREATE_FINALIZE_BEGIN]', end: '[CHAR_CREATE_FINALIZE_END]' },
+    // ── Party & scene rosters (who travels with the player / who is present) ────
+    PARTY_UPDATE: { begin: '[PARTY_UPDATE_BEGIN]', end: '[PARTY_UPDATE_END]' },
+    SCENE_UPDATE: { begin: '[SCENE_UPDATE_BEGIN]', end: '[SCENE_UPDATE_END]' },
+    // ── Narrative header (merged from gm-narrative-header) ──────────────────────
+    HEADER_FORMAT: { begin: '[HEADER_FORMAT_BEGIN]', end: '[HEADER_FORMAT_END]' },
     // ── Life simulation ───────────────────────────────────────────────────────
     NEEDS_SYSTEM: { begin: '[NEEDS_SYSTEM_BEGIN]', end: '[NEEDS_SYSTEM_END]' },
     NEEDS_UPDATE: { begin: '[NEEDS_UPDATE_BEGIN]', end: '[NEEDS_UPDATE_END]' },
@@ -93,6 +98,10 @@ var DEFAULT_SETTINGS = Object.freeze({
     interceptCommands: true, plotLorebook: '',
     injectResolution: true,
     pinPanel: false,          // keep the GM State drawer locked open
+    showPartyPanel: true, showScenePanel: true,
+    // ── Narrative header (merged from gm-narrative-header) ──────────────────
+    headerEnabled: true, headerUseFormatBlock: true, headerManualFormat: '',
+    headerSeparator: '---', headerShowOnEveryMsg: true,
 });
 
 var DEFAULT_CHAR_STATE = Object.freeze({
@@ -110,6 +119,9 @@ var DEFAULT_CHAR_STATE = Object.freeze({
     world_events: [],     // [{ id, title, date, location, description, consequences, status, resolution }]
     currency: {},         // denomination → amount   e.g. { copper: 0, silver: 0, gold: 0 }
     companions: {},       // slug → { name, type, control_cost, loyalty, status, notes, ap_unspent, ap_total, attributes, role }
+    party: {},            // slug → { slug, name, role, note, ref }  — lightweight roster (who travels with the player)
+    scene: {},            // slug → { slug, name, role, note, ref }  — who is present in the current scene
+    scene_location: '',   // optional current-scene location label
     adventurer_rank: { rank: 'F', rank_ladder: null, quest_count: 0, history: [] },
     // ── v4 additions ──────────────────────────────────────────────────────
     needs: {},            // meter_name → { value, max, label, warn_threshold, critical_threshold }
@@ -122,7 +134,9 @@ var DEFAULT_CHAR_STATE = Object.freeze({
     system_def: null,     // active ruleset (see modules/system.js); null → DEFAULT_SYSTEM_DEF
     equipment: {},        // slot_key → item name   (see modules/inventory.js)
     item_box: [],         // [{ item, condition }]  optional extradimensional container
-    schema_version: 6,
+    // ── v7 additions ──────────────────────────────────────────────────────
+    header_format: '',    // captured [HEADER_FORMAT] template (merged narrative header)
+    schema_version: 7,
 });
 
 // ── State accessors ───────────────────────────────────────────────────────────
@@ -160,7 +174,11 @@ function getCharState() {
     if (!s.equipment) s.equipment = {};
     if (!s.item_box)  s.item_box  = [];
     if (!s.capabilities) s.capabilities = {};
-    if (!s.schema_version || s.schema_version < 6) s.schema_version = 6;
+    if (!s.party)  s.party  = {};
+    if (!s.scene)  s.scene  = {};
+    if (s.scene_location === undefined) s.scene_location = '';
+    if (s.header_format === undefined)  s.header_format  = '';
+    if (!s.schema_version || s.schema_version < 7) s.schema_version = 7;
     return s;
 }
 
