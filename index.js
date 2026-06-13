@@ -1,5 +1,5 @@
 /**
- * GM Lore Parser — SillyTavern Extension  v9.0.0
+ * GM Lore Parser — SillyTavern Extension  v0.0.9 (beta)
  *
  * Entry point only. All logic lives in modules/. Load order matters:
  * state → utils → lorebook → system → schema → entity → companions →
@@ -15,7 +15,7 @@
  */
 
 var MODULE_NAME = 'gm-lore-parser';
-var VERSION     = '8.0.0';
+var VERSION     = '0.0.9';
 
 // ── Module loader ─────────────────────────────────────────────────────────────
 
@@ -371,7 +371,7 @@ async function renderSettingsPanel() {
         <div class="glp-field-setting"><label>Rule order</label><input  type="number" id="glp-rule-order"  class="text_pole" min="1" max="999" value="${settings.ruleOrder}"></div>
       </div>
       <div class="glp-info">
-        <b>v9 — modular build.</b> Modules: state · utils · lorebook · system · schema · entity · companions · progression · inventory · skills · domain · lore · sheet · creation · quests · reputation · events · currency · abilities · needs · commands · panel · context<br>
+        <b>v0.0.9 (beta) — modular build.</b> Modules: state · utils · lorebook · system · schema · entity · companions · progression · inventory · skills · domain · lore · sheet · creation · quests · reputation · events · currency · abilities · needs · commands · panel · context<br>
         <b>Skill modes:</b> pp (multi-tier, configurable) · use_tracked (threshold counter)<br>
         <b>Add a block type:</b> edit modules/state.js (registry) + add handler in the appropriate module
       </div>

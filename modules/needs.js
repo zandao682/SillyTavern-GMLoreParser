@@ -135,7 +135,7 @@ function cmdNeeds(state) {
         const isCrit = m.value <= m.critical_threshold;
         const isWarn = m.value <= m.warn_threshold;
         const tag    = isCrit ? ' ⚠ CRITICAL' : isWarn ? ' ⚠ LOW' : '';
-        const bar    = _asciiBar(pct, 20);
+        const bar    = _asciiBar(pct, presentationCfg().ascii_bar_width);
         return `${m.label.padEnd(12)} [${bar}] ${m.value}/${m.max}${tag}`;
     }).join('\n');
 }

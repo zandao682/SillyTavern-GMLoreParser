@@ -1,7 +1,7 @@
 {
     "display_name": "GM Lore Parser",
     "name": "gm-lore-parser",
-    "version": "9.0.0",
+    "version": "0.0.9",
     "author": "Zandao",
     "description": "System-agnostic GM toolkit. A lorebook-hosted System Definition ([SYSTEM_DEF]) declares the ruleset; a unified [ENTITY] engine drives player/NPC/companion/creature stat blocks; [ABILITY] unifies boons/titles/passives/evolution. Maintains lorebooks, character state, skills, factions, quests, currency, needs, and a live status panel. Modular build — logic in modules/ loaded at runtime.",
     "loading_order": 15,

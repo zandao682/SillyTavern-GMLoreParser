@@ -27,7 +27,8 @@ function renderField(key, descriptor, values) {
             const cur = parseFloat(val) || 0;
             const max = descriptor.max_field ? (parseFloat(values[descriptor.max_field]) || 0) : cur;
             const pct = max > 0 ? Math.max(0, Math.min(100, (cur / max) * 100)) : 0;
-            const d   = pct <= 25 ? 'glp-danger' : pct <= 50 ? 'glp-warning' : '';
+            const _pcfg = presentationCfg();
+            const d   = pct <= _pcfg.bar_danger_pct ? 'glp-danger' : pct <= _pcfg.bar_warn_pct ? 'glp-warning' : '';
             return `<div class="glp-field-bar ${d}">
                 <div class="glp-field-bar-header">
                     <span class="glp-field-label">${label}${evBadge}</span>
@@ -39,7 +40,7 @@ function renderField(key, descriptor, values) {
         case 'pool': {
             const cur  = parseInt(val) || 0;
             const max  = descriptor.max_field ? (parseInt(values[descriptor.max_field]) || cur) : cur;
-            const pips = Array.from({ length: Math.min(max, 20) }, (_, i) =>
+            const pips = Array.from({ length: Math.min(max, presentationCfg().max_pips) }, (_, i) =>
                 `<span class="glp-pip ${i < cur ? 'glp-pip-full' : 'glp-pip-empty'}" style="${i < cur ? `background:${color}` : ''}"></span>`
             ).join('');
             return `<div class="glp-field-pool">

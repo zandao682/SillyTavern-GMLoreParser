@@ -2,19 +2,10 @@
 
 A SillyTavern extension that automates campaign record-keeping for AI-run tabletop RPGs. The GM (or the Architect that designs a game) emits structured blocks at the end of messages; the extension parses them and maintains the ruleset, character/NPC/companion state, lorebooks, abilities, world time, and more — automatically.
 
-**Version:** 9.0.0
+**Version:** 0.0.9 (beta)
 **Requires:** SillyTavern 1.12.0+
 
----
-
-## What's new in v9
-
-v9 is a system-agnostic rebuild. Nothing about any one game is hardcoded:
-
-- **System Definition** — a single `[SYSTEM_DEF]` block defines the ruleset: which subsystems exist, the attribute list, derived-stat formulas, progression model, optional classes, reputation scale/tiers, skill model, rank ladder, needs, item conditions, and loyalty. It is stored in the campaign lorebook and drives every other module. With no definition present, sensible defaults apply.
-- **Unified entities** — Player, NPC, Companion, and Creature share **one** stat-block engine. A single `[ENTITY]` family of blocks (with a `type:` field) replaces the old per-type blocks; the type drives the follow-on behavior (NPC memory lorebooks, companion loyalty/AP, player change-log, immutable creature templates).
-- **Unified abilities** — Boons, Titles, innate/racial Passives, and Evolution traits are now one `[ABILITY]` concept with a `category:`.
-- **Optional everything** — Levels, XP, classes, AP, leveled skills, reputation, needs, and the other subsystems are all opt-in. A classless, levelless, skill-based system is fully supported.
+It is system-agnostic: a single `[SYSTEM_DEF]` block defines the ruleset (which subsystems exist, attributes, derived-stat formulas, progression model, optional classes, reputation/skill/needs settings, conflict resolution, and more). Player, NPC, Companion, and Creature share one stat-block engine via the unified `[ENTITY]` family; Boons/Titles/Passives/Evolution are one `[ABILITY]` concept. Levels, XP, classes, skills, reputation, needs, and the other subsystems are all opt-in — a classless, levelless, skill-based system is fully supported.
 
 ---
 
@@ -195,6 +186,7 @@ commands:
 - `locations:` — location `types`, whether discovery auto-creates a per-location history lorebook, and an optional `instances` subtype (only when `instance.enabled`).
 - `commands:` — reshape the `#` command set: alias/rename a built-in `view`, or add a custom command whose `template` renders `{tokens}` against character state. When present it defines the active set (plus always-on `#status`/`#vitals`/`#system`/`#help`).
 - `needs:`, `item_conditions:`, `rank_ladder:` — life-sim thresholds, durability bands, rank progression.
+- `presentation:` — display tuning: `bar_warn_pct` / `bar_danger_pct` (status-bar color thresholds), `max_pips` (pool pip cap), `ascii_bar_width` (`#needs` meters), `empty_label` (text for empty lists).
 
 Death/resurrection remains GM narrative (HP→0 prose). Instances are a **location subtype**, not a separate subsystem; the item box is just an optional second inventory with item conditions.
 
@@ -369,7 +361,22 @@ Typed by the player; answered locally without calling the model.
 | `#system` / `#ruleset` | System definition & resolution mechanic |
 | `#help` | Command list |
 
-The active command set is feature-gated (a command for a disabled feature drops out) and fully reshapeable via the System Definition's `commands:` section — alias/rename built-ins or add custom `{token}`-template commands. `#help` is generated from the active set.
+**The command set is configurable.** The table above is just the default. The active set is:
+
+- **Feature-gated** — a command whose subsystem is disabled in `features:` drops out of both the dispatcher and `#help` (e.g. no `#rank` when `ranks` is off). `#status`, `#vitals`, `#system`, and `#help` are always available.
+- **Reshapeable via the System Definition `commands:` section** — you can rename/alias a built-in view, drop one (omit it), or add a custom command whose `template` renders `{token}`s of character state. When `commands:` is present it defines the active set (the four always-on commands aside); `#help` is generated from it.
+
+```
+commands:
+  command: Party
+    triggers: #party, #companions      # alias/rename the built-in companions view
+    view: companions
+  command: Wounds
+    triggers: #wounds                  # a custom command
+    template: HP {hp}/{hp_max} — {conditions}
+```
+
+Template tokens include `{name}` `{class}` `{rank}` `{field}` `{field_max}` `{field_regen}` `{conditions}` `{currency}` `{active_title}` `{skill_score:Name}` and any schema/needs field.
 
 ---
 
@@ -402,7 +409,14 @@ A live, schema-driven panel renders above the chat input: identity + active titl
 | Panel toggles | on | Status / skills / domain / quests / reputation / events / currency / abilities / needs panels (a panel also hides when its feature is disabled in the system definition) |
 | Inject into context | on | Character state in Author's Note position |
 | Context injection depth | 1 | Messages from bottom where state injects |
+| Inject resolution | on | Prepend the system's conflict-resolution mechanic to context |
 | Scan / lore / rule order | 4 / 100 / 50 | Lorebook scan depth and entry ordering |
+
+---
+
+## Testing
+
+A full manual test plan covering both extensions lives in [`TESTING.md`](TESTING.md). It is exercised with the **Test Harness** card (`test-harness-card.json`) — a deterministic block emitter: import it, type `emit: <block>` (e.g. `emit: entity player`) and the reply carries exactly that block so the parser processes it. `emit: scenario smoke` runs a one-turn end-to-end smoke check. Blocks are only parsed in AI messages, which is why the harness is a character card rather than copy-paste snippets.
 
 ---
 

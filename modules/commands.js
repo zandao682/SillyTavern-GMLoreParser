@@ -205,7 +205,7 @@ function renderStateTemplate(format, state) {
         if (t === 'background') return state.background || '—';
         if (t === 'rank')       return state.adventurer_rank?.rank || '—';
         if (t === 'time' || t === 'date') return state.world_time?.display || '—';
-        if (t === 'conditions') return Array.isArray(v.conditions) && v.conditions.length ? v.conditions.join(', ') : 'None';
+        if (t === 'conditions') return Array.isArray(v.conditions) && v.conditions.length ? v.conditions.join(', ') : presentationCfg().empty_label;
         if (t === 'currency')   { const c = state.currency || {}; const p = Object.entries(c).filter(([, n]) => n > 0).map(([d, n]) => `${n} ${d}`); return p.length ? p.join(', ') : '—'; }
         if (t === 'active_title') { const a = (state.abilities || []).find(x => x.category === (getSystemDef().abilities?.exclusive_category || 'title') && x.active); return a ? a.name : '—'; }
         if (t.startsWith('skill_score:')) {

@@ -122,6 +122,11 @@ var DEFAULT_SYSTEM_DEF = Object.freeze({
 
     // ── Custom command set (optional; null → all built-ins active) ──
     commands: null,
+
+    // ── Presentation / display tuning (optional) ──
+    presentation: Object.freeze({
+        bar_warn_pct: 50, bar_danger_pct: 25, max_pips: 20, ascii_bar_width: 20, empty_label: 'None',
+    }),
 });
 
 // ── Accessors ──────────────────────────────────────────────────────────────────
@@ -141,6 +146,17 @@ function featureOn(name)     { const f = getSystemDef().features || {}; return f
 function getRankLadder()    { return getSystemDef().rank_ladder || RANK_LADDER; }
 /** Convenience: the item-condition tiers (def → fallback). */
 function getItemConditions() { return getSystemDef().item_conditions || ITEM_CONDITIONS; }
+/** Convenience: presentation/display tuning (def → fallback). */
+function presentationCfg() {
+    const p = getSystemDef().presentation || {};
+    return {
+        bar_warn_pct:    p.bar_warn_pct    ?? 50,
+        bar_danger_pct:  p.bar_danger_pct  ?? 25,
+        max_pips:        p.max_pips        ?? 20,
+        ascii_bar_width: p.ascii_bar_width ?? 20,
+        empty_label:     p.empty_label     || 'None',
+    };
+}
 
 // ── Safe formula evaluator ───────────────────────────────────────────────────
 // Substitutes named variables (longest-first, word-boundary) then evaluates the
@@ -475,6 +491,19 @@ function parseSystemDef(raw) {
                 enabled: inst.enabled ?? false,
                 types: inst.types && inst.types.length ? inst.types : DEFAULT_SYSTEM_DEF.locations.instances.types.slice(),
             },
+        };
+    }
+
+    // ── Presentation / display tuning ──
+    if (sec.presentation) {
+        const kv = _kvLines(sec.presentation.lines);
+        const dp = DEFAULT_SYSTEM_DEF.presentation;
+        parsed.presentation = {
+            bar_warn_pct:    kv.bar_warn_pct    !== undefined ? parseFloat(kv.bar_warn_pct)    : dp.bar_warn_pct,
+            bar_danger_pct:  kv.bar_danger_pct  !== undefined ? parseFloat(kv.bar_danger_pct)  : dp.bar_danger_pct,
+            max_pips:        kv.max_pips        !== undefined ? parseInt(kv.max_pips)          : dp.max_pips,
+            ascii_bar_width: kv.ascii_bar_width !== undefined ? parseInt(kv.ascii_bar_width)   : dp.ascii_bar_width,
+            empty_label:     kv.empty_label     || dp.empty_label,
         };
     }
 
