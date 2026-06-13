@@ -2,7 +2,7 @@
     "display_name": "GM Lore Parser",
     "name": "gm-lore-parser",
     "version": "8.0.0",
-    "author": "your-name-here",
+    "author": "Zandao",
     "description": "Parses structured GM output blocks and maintains campaign lorebooks, character state, NPC progression, skill systems (PP + use_tracked), domain tracking, and a live status panel. Modular build — logic in modules/ loaded at runtime.",
     "loading_order": 15,
     "requires": [],
