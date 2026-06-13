@@ -14,8 +14,24 @@
  *   4. Add a stripAllBlocks entry (automatic via the registry arrays in state.js)
  */
 
-var MODULE_NAME = 'gm-lore-parser';
-var VERSION     = '0.0.10';
+// SillyTavern loads this entry as an ES module (<script type="module">), so its
+// top-level declarations are NOT global. The classic module scripts injected by
+// glpLoadModules (state.js, …) read MODULE_NAME / VERSION as globals, so expose
+// them on window. (MODULE_NAME is also the settings/chatMetadata key.)
+var MODULE_NAME = window.MODULE_NAME = 'gm-lore-parser';
+var VERSION     = window.VERSION     = '0.0.10';
+
+// Resolve our own install folder from this module's own URL so module loading
+// works regardless of the third-party folder name (a GitHub clone is typically
+// "SillyTavern-GMLoreParser", not "gm-lore-parser"). Falls back to the
+// MODULE_NAME path if import.meta is unavailable.
+var GLP_MODULES_BASE = (function () {
+    try {
+        if (import.meta && import.meta.url)
+            return import.meta.url.replace(/index\.js(?:\?.*)?$/, 'modules/');
+    } catch (e) { /* fall through */ }
+    return `/scripts/extensions/third-party/${MODULE_NAME}/modules/`;
+})();
 
 // ── Module loader ─────────────────────────────────────────────────────────────
 
@@ -44,7 +60,7 @@ var GLP_MODULE_LOAD_ORDER = [
 ];
 
 async function glpLoadModules() {
-    const base = `/scripts/extensions/third-party/${MODULE_NAME}/modules/`;
+    const base = GLP_MODULES_BASE;
     for (const name of GLP_MODULE_LOAD_ORDER) {
         await new Promise((resolve) => {
             const s = document.createElement('script');
