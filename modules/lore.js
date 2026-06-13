@@ -92,23 +92,30 @@ async function processNpcMemory(raw, settings) {
     return processNpcMemoryDirect(npcName, memType, title, content, keywords, settings);
 }
 
-async function processNpcMemoryDirect(npcName, memType, title, content, keywords, settings) {
+/** Write a memory entry into a per-subject history lorebook (`<prefix>-<slug>`).
+ *  Used for NPC histories (prefix 'npc') and location histories (prefix 'location'). */
+async function writeSubjectMemory(subjectName, prefix, memType, title, content, keywords, settings) {
     const isCore = memType === 'core';
-    const lb     = `npc-${slugify(npcName)}`;
+    const lb     = `${prefix}-${slugify(subjectName)}`;
     await loadOrCreateLorebook(lb);
     await linkToChat(lb);
     const entry = {
-        comment:    `[Memory] ${npcName} — ${title || content.slice(0, 40)}`,
+        comment:    `[Memory] ${subjectName} — ${title || content.slice(0, 40)}`,
         key:        keywords, keysecondary: [],
-        content:    `[${npcName} — ${isCore ? 'Core Memory' : 'Memory'}]\n${content}`,
+        content:    `[${subjectName} — ${isCore ? 'Core Memory' : 'Memory'}]\n${content}`,
         constant:   isCore, selective: false, selectiveLogic: 0,
         order:      isCore ? 1 : 50, depth: settings.defaultScanDepth,
         disable:    false, addMemo: true,
         memo:       `${isCore ? 'Core' : 'Episodic'} memory — gm-lore-parser v${VERSION}`,
         position:   0, role: null,
-        extensions: { gm_lore_parser: true, type: 'NPC_MEMORY', npc: npcName, memory_type: memType },
+        extensions: { gm_lore_parser: true, type: `${prefix.toUpperCase()}_MEMORY`, subject: subjectName, memory_type: memType },
     };
     return upsertEntry(lb, entry);
+}
+
+/** NPC memory — thin wrapper over the generic subject-memory writer. */
+async function processNpcMemoryDirect(npcName, memType, title, content, keywords, settings) {
+    return writeSubjectMemory(npcName, 'npc', memType, title, content, keywords, settings);
 }
 
 function parseNpcCurrentValues(worldData, npcName) {
@@ -195,7 +202,76 @@ async function processItemUpdate(raw, settings) {
 // Bestiary entries are now "creature" entities (modules/entity.js creatureEntityBegin),
 // stored as immutable templates that NPC/creature instances can inherit via from_template.
 
-// ── Generic lore (Location, Faction, Rule, Event) ────────────────────────────
+// ── Location (first-class lore type; instances optional) ──────────────────────
+
+function locationsCfg() {
+    const l = getSystemDef().locations || {};
+    return {
+        types: l.types || ['Settlement', 'Wilderness', 'Dungeon', 'Landmark', 'Instance'],
+        create_history_lorebook: l.create_history_lorebook !== false,
+        instances: { enabled: l.instances?.enabled === true, types: l.instances?.types || ['Solo', 'Party', 'Raid'] },
+    };
+}
+
+async function processLocationBlock(fields, settings) {
+    if (!fields.name) { console.warn(`[${MODULE_NAME}] LOCATION missing name`); return false; }
+    const cfg   = locationsCfg();
+    const name  = fields.name;
+    const keys  = fields.keywords ? fields.keywords.split(',').map(k => k.trim()).filter(Boolean) : [name.toLowerCase()];
+
+    const lines = [`[Location] ${name}`];
+    if (fields.type)        lines.push(`Type: ${fields.type}`);
+    if (fields.region)      lines.push(`Region: ${fields.region}`);
+    if (fields.description) lines.push(`Description: ${fields.description}`);
+    // Instance subtype — only honored when the system enables instances
+    const isInstance = cfg.instances.enabled && (fields.instance === 'true' || fields.instance_type);
+    if (isInstance) {
+        lines.push('Instance: true');
+        if (fields.instance_type) lines.push(`Instance type: ${fields.instance_type}`);
+    }
+    for (const [k, v] of Object.entries(fields))
+        if (!LORE_META.has(k) && !['type', 'region', 'description', 'instance', 'instance_type'].includes(k))
+            lines.push(`${k.replace(/_/g, ' ')}: ${v}`);
+
+    await upsertEntry(settings.campaignLorebook, {
+        ...entryBase(`[Location] ${name}`, keys, lines.join('\n'), settings.loreOrder, settings,
+            { type: 'LOCATION', slug: slugify(name), location_type: fields.type || '', instance: isInstance, instance_type: isInstance ? (fields.instance_type || '') : '' }),
+    });
+
+    // Auto-create a per-location history lorebook on discovery
+    if (cfg.create_history_lorebook) {
+        const lb = `location-${slugify(name)}`;
+        await loadOrCreateLorebook(lb);
+        await linkToChat(lb);
+    }
+    console.log(`[${MODULE_NAME}] Location: "${name}"${fields.type ? ` (${fields.type})` : ''}${isInstance ? ' [instance]' : ''}`);
+    return true;
+}
+
+/** [LOCATION_MEMORY] — append to a location's history lorebook. */
+async function processLocationMemory(raw, settings) {
+    const fields = parseFields(raw);
+    const name   = fields.location || fields.name;
+    if (!name) { console.warn(`[${MODULE_NAME}] LOCATION_MEMORY missing location`); return false; }
+    const memType  = (fields.type || 'episodic').toLowerCase();
+    const title    = fields.title || '';
+    const content  = fields.content || fields.memory || '';
+    const keywords = fields.keywords ? fields.keywords.split(',').map(k => k.trim()).filter(Boolean)
+                                     : (memType === 'core' ? [] : [name.toLowerCase()]);
+    return writeSubjectMemory(name, 'location', memType, title, content, keywords, settings);
+}
+
+function cmdLocations(state) {
+    // Locations live in the lorebook, not chat state; surface what we can from the campaign book is async,
+    // so this lists the configured location types for reference.
+    const cfg = locationsCfg();
+    const lines = ['[Locations]', `Types: ${cfg.types.join(', ')}`];
+    if (cfg.instances.enabled) lines.push(`Instance types: ${cfg.instances.types.join(', ')}`);
+    lines.push('(Discovered locations are stored in the campaign lorebook and trigger by keyword.)');
+    return lines.join('\n');
+}
+
+// ── Generic lore (Faction, Rule, Event) ──────────────────────────────────────
 
 async function processGenericLore(type, cfg, fields, settings) {
     if (!fields.name && type !== 'EVENT') return false;

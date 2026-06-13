@@ -149,20 +149,30 @@ function buildStatusPanelHTML(state) {
     const eventsHtml   = settings.showEventsPanel && featureOn('world_events') && (state.world_events || []).length
         ? `<details class="glp-events-details"><summary>World Events</summary>
            <div class="glp-events-panel">${buildEventsPanel(state.world_events)}</div></details>` : '';
-    const currencyHtml = settings.showCurrencyPanel && featureOn('currency') &&
-        (Object.keys(state.currency || {}).length || state.adventurer_rank?.rank || Object.keys(state.companions || {}).length)
-        ? `<details class="glp-currency-details"><summary>Currency &amp; Companions</summary>
-           <div class="glp-currency-panel">${buildCurrencyPanel(state.currency || {}, state.adventurer_rank || {}, state.companions || {})}</div></details>` : '';
+    const currencyHtml = settings.showCurrencyPanel && featureOn('currency') && Object.keys(state.currency || {}).length
+        ? `<details class="glp-currency-details"><summary>Currency</summary>
+           <div class="glp-currency-panel">${buildCurrencyPanel(state.currency || {})}</div></details>` : '';
+    const rankHtml = settings.showCurrencyPanel && featureOn('ranks') && state.adventurer_rank?.rank
+        ? `<details class="glp-rank-details"><summary>Rank</summary>
+           <div class="glp-rank-panel">${buildRankPanel(state.adventurer_rank)}</div></details>` : '';
+    const companionHtml = settings.showCurrencyPanel && featureOn('companions') && Object.keys(state.companions || {}).length
+        ? `<details class="glp-companion-details"><summary>Companions</summary>
+           <div class="glp-companion-panel">${buildCompanionPanel(state.companions || {})}</div></details>` : '';
     const ownAbilities = (state.abilities || []).filter(a => a.entity_slug === 'player');
     const boonHtml = settings.showBoonPanel && featureOn('abilities') && ownAbilities.length
         ? `<details class="glp-boon-details open"><summary>Abilities &amp; Titles</summary>
            <div class="glp-boon-panel">${buildAbilityPanelHTML(state.abilities || [], settings)}</div></details>` : '';
+    const _invHtml = buildInventoryPanel(state);
+    const inventoryHtml = _invHtml
+        ? `<details class="glp-inventory-details"><summary>Equipment &amp; Inventory</summary>
+           <div class="glp-inventory-panel">${_invHtml}</div></details>` : '';
     const needsHtml = settings.showNeedsPanel && featureOn('needs') && Object.keys(state.needs || {}).length
         ? `<details class="glp-needs-details open"><summary>Needs</summary>
            <div class="glp-needs-panel">${buildNeedsPanel(state.needs || {}, settings)}</div></details>` : '';
 
-    // Active-title badge for header
-    const activeTitle = (state.abilities || []).find(a => a.category === 'title' && a.active && a.entity_slug === 'player');
+    // Active-title badge for header (exclusive ability category, e.g. title)
+    const _exCat = getSystemDef().abilities?.exclusive_category || 'title';
+    const activeTitle = (state.abilities || []).find(a => a.category === _exCat && a.active && a.entity_slug === 'player');
     const titleBadge  = activeTitle ? `<span class="glp-active-title">${activeTitle.name}</span>` : '';
 
     return `<div id="glp-status-panel" class="glp-status">
@@ -175,7 +185,7 @@ function buildStatusPanelHTML(state) {
             ${timeDisplay}
         </div>
         <div class="glp-groups-container">${sections || '<span class="glp-no-schema">Schema not defined.</span>'}</div>
-        ${needsHtml}${skillHtml}${domainHtml}${questHtml}${repHtml}${eventsHtml}${currencyHtml}${boonHtml}
+        ${needsHtml}${skillHtml}${domainHtml}${questHtml}${repHtml}${eventsHtml}${currencyHtml}${rankHtml}${companionHtml}${inventoryHtml}${boonHtml}
     </div>`;
 }
 

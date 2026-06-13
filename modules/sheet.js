@@ -18,11 +18,13 @@ function applyPlayerSheet(raw) {
     if (Object.keys(ps.fields).length > 0) state.schema = ps;
 
     const reserved = new Set(['name', 'class', 'background', 'schema', 'schema_version', 'type', 'from_template']);
+    const sf = state.schema?.fields || {};
     for (const [key, val] of Object.entries(fields)) {
         if (reserved.has(key)) continue;
-        if (key === 'inventory')   state.values.inventory   = val.split(';').map(s => s.trim()).filter(Boolean);
-        else if (key === 'conditions') state.values.conditions = val.split(',').map(s => s.trim()).filter(Boolean);
-        else { const num = parseFloat(val); state.values[key] = isNaN(num) ? val : num; }
+        if (sf[key]?.type === 'list') {
+            const sep = sf[key].separator || ',';
+            state.values[key] = val.split(sep).map(s => s.trim()).filter(Boolean);
+        } else { const num = parseFloat(val); state.values[key] = isNaN(num) ? val : num; }
     }
 }
 

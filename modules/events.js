@@ -25,6 +25,15 @@
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+function eventsCfg() {
+    const w = getSystemDef().world_events || {};
+    return {
+        statuses:       w.statuses       || ['Ongoing', 'Averted', 'Resolved'],
+        plot_types:     w.plot_types     || ['Ongoing', 'Historical', 'Rumour'],
+        default_status: w.default_status || 'Ongoing',
+    };
+}
+
 function makeEventId(title) {
     return `evt_${slugify(title)}_${Date.now ? '' : Math.floor(Math.random() * 1e6)}${slugify(title)}`.slice(0, 48);
 }
@@ -45,7 +54,7 @@ async function applyWorldEventBlock(raw, settings) {
         location:     fields.location     || '',
         description:  fields.description  || '',
         consequences: fields.consequences || '',
-        status:       fields.status       || 'Ongoing',
+        status:       fields.status       || eventsCfg().default_status,
         resolution:   '',
     };
 
@@ -113,7 +122,7 @@ async function processPlotEntry(raw, settings) {
         ? fields.keywords.split(',').map(k => k.trim()).filter(Boolean)
         : [fields.title.toLowerCase()];
 
-    const type    = fields.type || 'Ongoing';
+    const type    = fields.type || eventsCfg().plot_types[0];
     const summary = fields.summary || fields.description || '';
     const notes   = fields.notes || '';
 
@@ -149,7 +158,7 @@ function buildEventLoreContent(event) {
 // ── Context string ────────────────────────────────────────────────────────────
 
 function buildWorldEventsContextString(world_events) {
-    const ongoing = world_events.filter(e => e.status === 'Ongoing');
+    const ongoing = world_events.filter(e => e.status === eventsCfg().default_status);
     if (!ongoing.length) return '';
     const lines = ['[Ongoing World Events]'];
     for (const e of ongoing) {
@@ -163,8 +172,9 @@ function buildWorldEventsContextString(world_events) {
 
 function buildEventsPanel(world_events) {
     if (!world_events.length) return '<div class="glp-panel-empty">No world events recorded.</div>';
-    const statusOrder = { Ongoing: 0, Averted: 1, Resolved: 2 };
-    const sorted = [...world_events].sort((a, b) => (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9));
+    const order = eventsCfg().statuses;
+    const rankOf = s => { const i = order.indexOf(s); return i === -1 ? 99 : i; };
+    const sorted = [...world_events].sort((a, b) => rankOf(a.status) - rankOf(b.status));
     return sorted.map(e => {
         const cls = `glp-event-${(e.status || 'ongoing').toLowerCase()}`;
         const loc = e.location ? ` <span class="glp-event-loc">${e.location}</span>` : '';
@@ -182,8 +192,11 @@ function cmdEvents(state) {
     const events = state.world_events || [];
     if (!events.length) return '[World Events]\nNo world events recorded.';
     const lines = ['[World Events]'];
-    const groups = { Ongoing: [], Averted: [], Resolved: [] };
-    for (const e of events) (groups[e.status] || groups.Resolved).push(e);
+    const statuses = eventsCfg().statuses;
+    const groups = {};
+    for (const s of statuses) groups[s] = [];
+    const fallback = statuses[statuses.length - 1];
+    for (const e of events) (groups[e.status] || groups[fallback]).push(e);
     for (const [status, list] of Object.entries(groups)) {
         if (!list.length) continue;
         lines.push(`\n${status.toUpperCase()}`);

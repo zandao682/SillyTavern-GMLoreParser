@@ -8,8 +8,8 @@
 /** Apply a single field value update, respecting field type semantics. */
 function applyFieldValue(key, val, desc, values) {
     const ft = desc?.type || 'value';
-    if (ft === 'list' || key === 'conditions' || key === 'inventory') {
-        const sep  = key === 'inventory' ? ';' : ',';
+    if (ft === 'list') {
+        const sep  = desc?.separator || ',';
         const ops  = val.split(sep).map(s => s.trim()).filter(Boolean);
         if (!Array.isArray(values[key])) values[key] = [];
         const hasPrefix = ops.some(o => o.startsWith('+') || o.startsWith('-'));

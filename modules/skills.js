@@ -25,6 +25,11 @@ function getTierNames(ss) {
     return ss.tier_names || getSystemDef().skills?.tier_names || DEFAULT_TIER_NAMES;
 }
 
+/** Levels per tier: per-chat override → system definition → 10. */
+function skillsLevelsPerTier(ss) {
+    return ss.levels_per_tier ?? getSystemDef().skills?.levels_per_tier ?? 10;
+}
+
 /** PP cost for one level within a given tier index (0-based). */
 function ppPerLevel(ss, tierIdx) {
     if (ss.mode !== 'pp') return ss.uses_threshold || 5;
@@ -52,10 +57,11 @@ function getOrInitSkill(ss, skillKey, skillName, governing) {
 
 /** Sum of all skill level contributions across the skill system. */
 function recalcTotalLevels(ss) {
+    const lpt = skillsLevelsPerTier(ss);
     let total = 0;
     for (const sk of Object.values(ss.skills)) {
         total += ss.mode === 'pp'
-            ? sk.tier_idx * ss.levels_per_tier + sk.level + 1
+            ? sk.tier_idx * lpt + sk.level + 1
             : (sk.level || 0);
     }
     return total;
@@ -64,7 +70,7 @@ function recalcTotalLevels(ss) {
 /** Compute the check score for a single skill. */
 function calcSkillScore(ss, skill) {
     const totalLevels = recalcTotalLevels(ss);
-    const skillLevel  = skill.tier_idx * ss.levels_per_tier + skill.level;
+    const skillLevel  = skill.tier_idx * skillsLevelsPerTier(ss) + skill.level;
     const formula     = ss.score_formula || getSystemDef().skills?.score_formula;
     return Math.round(evalFormula(formula, { total_levels: totalLevels, skill_level: skillLevel }, 10));
 }
@@ -128,14 +134,15 @@ function applySkillUpdate(raw) {
 
         skill.pp += upd.pp;
         let advanced = false;
+        const lpt = skillsLevelsPerTier(ss);
 
         while (skill.pp >= skill.pp_needed) {
             skill.pp    -= skill.pp_needed;
             skill.level += 1;
-            skill.total_levels = skill.tier_idx * ss.levels_per_tier + skill.level + 1;
+            skill.total_levels = skill.tier_idx * lpt + skill.level + 1;
             advanced = true;
 
-            if (skill.level >= ss.levels_per_tier) {
+            if (skill.level >= lpt) {
                 const tierNames   = getTierNames(ss);
                 const nextTierIdx = skill.tier_idx + 1;
                 if (nextTierIdx < tierNames.length) {
@@ -147,7 +154,7 @@ function applySkillUpdate(raw) {
                     notifications.push({ type: 'tier', msg: `${skill.name}: Advanced to ${newTier}!` });
                     console.log(`[${MODULE_NAME}] Skill tier: ${skill.name} ${oldTier}→${newTier}`);
                 } else {
-                    skill.level = ss.levels_per_tier;
+                    skill.level = lpt;
                     skill.pp    = 0;
                     notifications.push({ type: 'tier', msg: `${skill.name}: Maximum mastery achieved!` });
                 }

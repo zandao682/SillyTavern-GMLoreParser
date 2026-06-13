@@ -58,12 +58,41 @@ derived:
 progression:
   levels: false
   xp: false
+
+resolution:
+  mechanic: 2d6 + skill vs. 8
+  difficulty: 6 easy / 8 standard / 10 hard
+
+inventory:
+  model: slots
+  capacity: 12
+  item_box: true
+equipment:
+  enabled: true
+  slot: main_hand | Main Hand
+  slot: armor | Armor
+
+locations:
+  types: Town, Wilds, Rift
+  instance.enabled: true
+  instance.types: Solo, Raid
+
+commands:
+  command: Wounds
+    triggers: #wounds
+    template: HP {hp}/{hp_max} — {conditions}
 [SYSTEM_DEF_END]
 ```
 
+> **List fields & separators.** A `type: list` schema field splits its value on `,` by default; add a
+> `separator:` descriptor to change it (e.g. `separator: ;` for an inventory of multi-word items).
+> Declare `inventory` and `conditions` as `type: list` fields in your schema — there is no longer any
+> special-casing of those names.
+>
 > **Migration note:** Older examples below use the legacy `[PLAYER_SHEET_BEGIN] … [PLAYER_SHEET_END]`
-> tag. Substitute `[ENTITY_BEGIN]` + a `type: player` line (and `[ENTITY_END]`); everything
-> inside — the `schema:` block, field descriptors, mutability modes, and starting values — is identical.
+> tag. Substitute `[ENTITY_BEGIN]` + a `type: player` line (and `[ENTITY_END]`); the `schema:` block,
+> field descriptors, mutability modes, and starting values are otherwise identical. Where an example's
+> `inventory` field holds semicolon-separated items, add `separator: ;` to that field.
 
 ---
 

@@ -11,6 +11,7 @@ function buildContextString(state) {
     }
 
     if (!state.name) return null;
+    const resolutionText = getSettings().injectResolution !== false ? buildResolutionContextString(getSystemDef()) : '';
     const header        = `[Character: ${state.name}${state.class_ ? ` | ${state.class_}` : ''}${state.background ? ` | ${state.background}` : ''}]`;
     const charText      = buildValueSummary(header, state.schema || { fields: {}, groups: [] }, state.values || {});
     const skillText     = featureOn('skills')      ? buildSkillContextString(state.skill_system) : '';
@@ -19,11 +20,13 @@ function buildContextString(state) {
     const questText     = featureOn('quests')      ? buildQuestContextString(state.quests || {}) : '';
     const repText       = featureOn('reputation')  ? buildFactionContextString(state.factions || {}, state.reputation || {}) : '';
     const eventsText    = featureOn('world_events') ? buildWorldEventsContextString(state.world_events || []) : '';
-    const currencyText  = featureOn('currency')    ? buildCurrencyContextString(state.currency || {}, state.adventurer_rank) : '';
+    const currencyText  = featureOn('currency')    ? buildCurrencyContextString(state.currency || {}) : '';
+    const rankText      = featureOn('ranks')       ? buildRankContextString(state.adventurer_rank) : '';
     const companionText = featureOn('companions')  ? buildCompanionContextString(state.companions || {}) : '';
     const abilityText   = featureOn('abilities')   ? buildAbilityContextString(state.abilities || []) : '';
     const needsText     = featureOn('needs')       ? buildNeedsContextString(state.needs || {}) : '';  // only injects when below warn threshold
-    return [charText, skillText, domainText, timeText, questText, repText, eventsText, currencyText, companionText, abilityText, needsText].filter(Boolean).join('\n');
+    const inventoryText = featureOn('equipment') ? buildInventoryContextString(state) : '';
+    return [resolutionText, charText, skillText, domainText, timeText, questText, repText, eventsText, currencyText, rankText, companionText, abilityText, inventoryText, needsText].filter(Boolean).join('\n');
 }
 
 function injectCharacterContext() {

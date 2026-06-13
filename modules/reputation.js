@@ -27,6 +27,9 @@
 
 var DEFAULT_REP_TIERS = ['Hostile', 'Cold', 'Neutral', 'Friendly', 'Allied', 'Sworn'];
 
+/** The system's default faction attitude (shown as "unset"). */
+function defaultAttitude() { return getSystemDef().factions?.default_attitude || 'Unknown'; }
+
 function _repDef() {
     const r = getSystemDef().reputation || {};
     return {
@@ -123,7 +126,7 @@ async function processFactionBlock(fields, settings) {
         goals:             fields.goals             || existing.goals             || '',
         leadership:        fields.leadership        || existing.leadership        || '',
         resources:         fields.resources         || existing.resources         || '',
-        attitude_to_party: fields.attitude_to_party || existing.attitude_to_party || 'Unknown',
+        attitude_to_party: fields.attitude_to_party || existing.attitude_to_party || defaultAttitude(),
         current_state:     fields.current_state     || existing.current_state     || '',
         notes:             fields.notes             || existing.notes             || '',
         keywords,
@@ -160,7 +163,7 @@ async function processFactionUpdate(raw, settings) {
     if (!state.factions[slug]) {
         state.factions[slug] = {
             name: fields.name, type: '', goals: '', leadership: '',
-            resources: '', attitude_to_party: 'Unknown', current_state: '',
+            resources: '', attitude_to_party: defaultAttitude(), current_state: '',
             notes: '', keywords: [fields.name.toLowerCase(), slug], history: [],
         };
     }
@@ -243,7 +246,7 @@ async function applyReputationUpdate(raw, settings) {
     if (!state.factions[slug]) {
         state.factions[slug] = {
             name: faction, type: '', goals: '', leadership: '', resources: '',
-            attitude_to_party: 'Unknown', current_state: '', notes: '',
+            attitude_to_party: defaultAttitude(), current_state: '', notes: '',
             keywords: [faction.toLowerCase(), slug], history: [],
         };
     }
@@ -278,7 +281,7 @@ function buildFactionContextString(factions, reputation) {
         lines.push(`  ${name}${standing}`);
         if (f?.goals)      lines.push(`    Goals: ${f.goals}`);
         if (f?.leadership) lines.push(`    Led by: ${f.leadership}`);
-        if (f?.attitude_to_party && f.attitude_to_party !== 'Unknown')
+        if (f?.attitude_to_party && f.attitude_to_party !== defaultAttitude())
             lines.push(`    Attitude: ${f.attitude_to_party}`);
     }
     return lines.join('\n');
@@ -299,7 +302,7 @@ function buildRepPanelHTML(factions, reputation) {
         const pct   = rep ? Math.max(0, Math.min(100, ((rep.standing - def.min) / span) * 100)) : 50;
         const tier  = rep ? rep.tier : '—';
         const tierClass = `glp-rep-${tier.toLowerCase()}`;
-        const attitude  = f?.attitude_to_party && f.attitude_to_party !== 'Unknown'
+        const attitude  = f?.attitude_to_party && f.attitude_to_party !== defaultAttitude()
             ? `<span class="glp-faction-attitude">${f.attitude_to_party}</span>` : '';
         const goals = f?.goals
             ? `<div class="glp-faction-goals">${f.goals}</div>` : '';
@@ -350,7 +353,7 @@ function cmdFactions(state) {
         if (f?.type)              lines.push(`    Type: ${f.type}`);
         if (f?.leadership)        lines.push(`    Leadership: ${f.leadership}`);
         if (f?.goals)             lines.push(`    Goals: ${f.goals}`);
-        if (f?.attitude_to_party && f.attitude_to_party !== 'Unknown')
+        if (f?.attitude_to_party && f.attitude_to_party !== defaultAttitude())
             lines.push(`    Attitude: ${f.attitude_to_party}`);
         if (f?.current_state)     lines.push(`    State: ${f.current_state}`);
     }

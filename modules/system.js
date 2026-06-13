@@ -21,7 +21,7 @@ var FORMULA_SAFE_RE    = /^[\d\s+\-*/().]+$/;
 
 var ALL_FEATURES = [
     'skills', 'ranks', 'reputation', 'currency', 'needs',
-    'companions', 'domains', 'quests', 'abilities', 'world_events',
+    'companions', 'domains', 'quests', 'abilities', 'world_events', 'equipment',
 ];
 
 var DEFAULT_SYSTEM_DEF = Object.freeze({
@@ -74,6 +74,54 @@ var DEFAULT_SYSTEM_DEF = Object.freeze({
     needs: Object.freeze({ warn_threshold: 30, critical_threshold: 10 }),
     item_conditions: null,           // null → fall back to ITEM_CONDITIONS
     loyalty: Object.freeze({ scale_min: 0, scale_max: 100, initial: 50 }),
+
+    // ── Conflict resolution (documentation only — the extension never rolls) ──
+    resolution: Object.freeze({
+        mechanic:   'd20 + modifier vs. DC',
+        dice:       'd20',
+        difficulty: 'Easy 10 / Medium 15 / Hard 20 / Very Hard 25',
+        crit:       'Natural 20 = critical success; natural 1 = critical failure',
+        notes:      'The GM narrates and resolves checks; the extension never rolls dice.',
+    }),
+
+    // ── Subsystem vocabularies (optional; defaults preserve current behavior) ──
+    quests: Object.freeze({
+        categories: Object.freeze(['Main', 'Side', 'Personal', 'Guild']),
+        statuses:   Object.freeze(['Active', 'Paused', 'Completed', 'Failed']),
+        default_category: 'Side', default_status: 'Active',
+    }),
+    world_events: Object.freeze({
+        statuses:   Object.freeze(['Ongoing', 'Averted', 'Resolved']),
+        plot_types: Object.freeze(['Ongoing', 'Historical', 'Rumour']),
+        default_status: 'Ongoing',
+    }),
+    factions: Object.freeze({
+        attitudes: Object.freeze(['Unknown', 'Hostile', 'Wary', 'Neutral', 'Cordial', 'Allied']),
+        default_attitude: 'Unknown',
+    }),
+    companions: Object.freeze({
+        roles:    Object.freeze(['standard', 'lieutenant']),
+        statuses: Object.freeze(['Active', 'Inactive', 'Dismissed', 'Dead']),
+        default_role: 'standard', lieutenant_role: 'lieutenant', default_status: 'Active',
+    }),
+    abilities: Object.freeze({
+        categories: Object.freeze(['boon', 'title', 'passive', 'trait', 'evolution']),
+        default_category: 'boon', default_activation: 'always', exclusive_category: 'title',
+    }),
+
+    // ── Possessions (configurable; optional) ──
+    inventory: Object.freeze({ model: 'freeform', capacity: null, unit: 'slots', item_box: false }),
+    equipment: Object.freeze({ enabled: false, slots: Object.freeze([]) }),
+
+    // ── Locations (first-class lore; instances optional) ──
+    locations: Object.freeze({
+        types: Object.freeze(['Settlement', 'Wilderness', 'Dungeon', 'Landmark', 'Instance']),
+        create_history_lorebook: true,
+        instances: Object.freeze({ enabled: false, types: Object.freeze(['Solo', 'Party', 'Raid']) }),
+    }),
+
+    // ── Custom command set (optional; null → all built-ins active) ──
+    commands: null,
 });
 
 // ── Accessors ──────────────────────────────────────────────────────────────────
@@ -307,8 +355,8 @@ function parseSystemDef(raw) {
     if (sec.needs) {
         const kv = _kvLines(sec.needs.lines);
         parsed.needs = {
-            warn_threshold:     kv.warn     !== undefined ? parseInt(kv.warn)     : 30,
-            critical_threshold: kv.critical !== undefined ? parseInt(kv.critical) : 10,
+            warn_threshold:     kv.warn     !== undefined ? parseInt(kv.warn)     : DEFAULT_SYSTEM_DEF.needs.warn_threshold,
+            critical_threshold: kv.critical !== undefined ? parseInt(kv.critical) : DEFAULT_SYSTEM_DEF.needs.critical_threshold,
         };
     }
 
@@ -328,6 +376,127 @@ function parseSystemDef(raw) {
             scale_min: scale.min, scale_max: scale.max,
             initial: kv.initial !== undefined ? parseInt(kv.initial) : Math.round((scale.min + scale.max) / 2),
         };
+    }
+
+    // ── Conflict resolution ──
+    if (sec.resolution) {
+        const kv = _kvLines(sec.resolution.lines);
+        const d  = DEFAULT_SYSTEM_DEF.resolution;
+        parsed.resolution = {
+            mechanic:   kv.mechanic   || sec.resolution.inline || d.mechanic,
+            dice:       kv.dice       || d.dice,
+            difficulty: kv.difficulty || d.difficulty,
+            crit:       kv.crit       || d.crit,
+            notes:      kv.notes      || d.notes,
+        };
+    }
+
+    // ── Subsystem vocabularies ──
+    if (sec.quests) {
+        const kv = _kvLines(sec.quests.lines);
+        parsed.quests = {
+            categories: kv.categories ? _csv(kv.categories) : DEFAULT_SYSTEM_DEF.quests.categories.slice(),
+            statuses:   kv.statuses   ? _csv(kv.statuses)   : DEFAULT_SYSTEM_DEF.quests.statuses.slice(),
+            default_category: kv.default_category || DEFAULT_SYSTEM_DEF.quests.default_category,
+            default_status:   kv.default_status   || DEFAULT_SYSTEM_DEF.quests.default_status,
+        };
+    }
+    if (sec.world_events) {
+        const kv = _kvLines(sec.world_events.lines);
+        parsed.world_events = {
+            statuses:   kv.statuses   ? _csv(kv.statuses)   : DEFAULT_SYSTEM_DEF.world_events.statuses.slice(),
+            plot_types: kv.plot_types ? _csv(kv.plot_types) : DEFAULT_SYSTEM_DEF.world_events.plot_types.slice(),
+            default_status: kv.default_status || DEFAULT_SYSTEM_DEF.world_events.default_status,
+        };
+    }
+    if (sec.factions) {
+        const kv = _kvLines(sec.factions.lines);
+        parsed.factions = {
+            attitudes: kv.attitudes ? _csv(kv.attitudes) : DEFAULT_SYSTEM_DEF.factions.attitudes.slice(),
+            default_attitude: kv.default_attitude || DEFAULT_SYSTEM_DEF.factions.default_attitude,
+        };
+    }
+    if (sec.companions) {
+        const kv = _kvLines(sec.companions.lines);
+        parsed.companions = {
+            roles:    kv.roles    ? _csv(kv.roles)    : DEFAULT_SYSTEM_DEF.companions.roles.slice(),
+            statuses: kv.statuses ? _csv(kv.statuses) : DEFAULT_SYSTEM_DEF.companions.statuses.slice(),
+            default_role:    kv.default_role    || DEFAULT_SYSTEM_DEF.companions.default_role,
+            lieutenant_role: kv.lieutenant_role || DEFAULT_SYSTEM_DEF.companions.lieutenant_role,
+            default_status:  kv.default_status  || DEFAULT_SYSTEM_DEF.companions.default_status,
+        };
+    }
+    if (sec.abilities) {
+        const kv = _kvLines(sec.abilities.lines);
+        parsed.abilities = {
+            categories: kv.categories ? _csv(kv.categories) : DEFAULT_SYSTEM_DEF.abilities.categories.slice(),
+            default_category:   kv.default_category   || DEFAULT_SYSTEM_DEF.abilities.default_category,
+            default_activation: kv.default_activation || DEFAULT_SYSTEM_DEF.abilities.default_activation,
+            exclusive_category: kv.exclusive_category || DEFAULT_SYSTEM_DEF.abilities.exclusive_category,
+        };
+    }
+
+    // ── Possessions ──
+    if (sec.inventory) {
+        const kv = _kvLines(sec.inventory.lines);
+        parsed.inventory = {
+            model:    kv.model    || 'freeform',
+            capacity: kv.capacity !== undefined ? (parseFloat(kv.capacity) || null) : null,
+            unit:     kv.unit     || 'slots',
+            item_box: _bool(kv.item_box, false),
+        };
+    }
+    if (sec.equipment) {
+        const kv = _kvLines(sec.equipment.lines.filter(l => !/^slot\s*:/i.test(l)));
+        const slots = [];
+        for (const l of sec.equipment.lines) {
+            const m = l.match(/^slot\s*:(.*)$/i);
+            if (!m) continue;
+            const [key, label] = m[1].split('|').map(s => s.trim());
+            if (key) slots.push({ key: key.toLowerCase().replace(/\s+/g, '_'), label: label || key });
+        }
+        parsed.equipment = { enabled: _bool(kv.enabled, slots.length > 0), slots };
+    }
+
+    // ── Locations ──
+    if (sec.locations) {
+        const kv = _kvLines(sec.locations.lines.filter(l => !/^instance/i.test(l)));
+        const inst = {};
+        for (const l of sec.locations.lines) {
+            const m = l.match(/^instances?[._]?(enabled|types)\s*:(.*)$/i);
+            if (!m) continue;
+            if (m[1].toLowerCase() === 'enabled') inst.enabled = _bool(m[2].trim(), false);
+            else inst.types = _csv(m[2]);
+        }
+        parsed.locations = {
+            types: kv.types ? _csv(kv.types) : DEFAULT_SYSTEM_DEF.locations.types.slice(),
+            create_history_lorebook: _bool(kv.create_history_lorebook, true),
+            instances: {
+                enabled: inst.enabled ?? false,
+                types: inst.types && inst.types.length ? inst.types : DEFAULT_SYSTEM_DEF.locations.instances.types.slice(),
+            },
+        };
+    }
+
+    // ── Custom command set: `command: <Label>` opens an entry; indented props follow ──
+    if (sec.commands) {
+        const cmds = [];
+        let cur = null;
+        for (const l of sec.commands.lines) {
+            const m = l.match(/^command\s*:(.*)$/i);
+            if (m) {
+                cur = { label: m[1].trim(), triggers: [], view: '', template: '' };
+                cmds.push(cur);
+            } else if (cur) {
+                const c = l.indexOf(':'); if (c === -1) continue;
+                const k = l.slice(0, c).trim().toLowerCase(), v = l.slice(c + 1).trim();
+                if (k === 'triggers')      cur.triggers = _csv(v).map(t => t.startsWith('#') ? t.toLowerCase() : '#' + t.toLowerCase());
+                else if (k === 'view')     cur.view = v.toLowerCase();
+                else if (k === 'template') cur.template = v;
+                else if (k === 'label')    cur.label = v;
+            }
+        }
+        parsed.commands = cmds.filter(c => c.triggers.length && (c.view || c.template));
     }
 
     return mergeWithDefaults(parsed);
@@ -398,5 +567,22 @@ function buildSystemDefSummary(def) {
         lines.push(`Reputation (${def.reputation.scale_min}-${def.reputation.scale_max}): ${def.reputation.tiers.join(' < ')}`);
     if (def.features.skills !== false && def.skills?.enabled)
         lines.push(`Skills: ${(def.skills.tier_names || DEFAULT_TIER_NAMES).join(' < ')}`);
+    if (def.resolution?.mechanic)
+        lines.push(`Resolution: ${def.resolution.mechanic}`);
+    if (def.features.equipment !== false && def.equipment?.enabled && def.equipment.slots?.length)
+        lines.push(`Equipment slots: ${def.equipment.slots.map(s => s.label || s.key).join(', ')}`);
+    if (def.inventory && def.inventory.model !== 'freeform')
+        lines.push(`Inventory: ${def.inventory.model}${def.inventory.capacity ? ` (${def.inventory.capacity} ${def.inventory.unit})` : ''}`);
+    return lines.join('\n');
+}
+
+/** Context block documenting how checks are resolved, so the GM stays consistent. */
+function buildResolutionContextString(def) {
+    const r = (def || getSystemDef()).resolution;
+    if (!r || !r.mechanic) return '';
+    const lines = ['[Resolution]', `Mechanic: ${r.mechanic}`];
+    if (r.difficulty) lines.push(`Difficulty: ${r.difficulty}`);
+    if (r.crit)       lines.push(`Crits: ${r.crit}`);
+    if (r.notes)      lines.push(r.notes);
     return lines.join('\n');
 }

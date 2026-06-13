@@ -19,31 +19,41 @@
  * gets a lorebook entry. Commands #boons / #titles / #abilities filter by category.
  */
 
-var ABILITY_CATEGORIES = ['boon', 'title', 'passive', 'trait', 'evolution'];
+function abilityCfg() {
+    const a = getSystemDef().abilities || {};
+    return {
+        categories:         a.categories         || ['boon', 'title', 'passive', 'trait', 'evolution'],
+        default_category:   a.default_category   || 'boon',
+        default_activation: a.default_activation || 'always',
+        exclusive_category: a.exclusive_category || 'title',
+    };
+}
 
 async function processAbilityBlock(fields, settings) {
     const state = getCharState();
     if (!fields.name) { console.warn(`[${MODULE_NAME}] ABILITY missing name`); return false; }
 
-    const category = (fields.category || 'boon').toLowerCase();
-    const slug     = slugify(fields.name);
+    const cfg       = abilityCfg();
+    const category  = (fields.category || cfg.default_category).toLowerCase();
+    const slug      = slugify(fields.name);
     const ownerSlug = fields.entity ? slugify(fields.entity) : 'player';
-    const keywords = fields.keywords ? fields.keywords.split(',').map(k => k.trim()).filter(Boolean) : [fields.name];
+    const keywords  = fields.keywords ? fields.keywords.split(',').map(k => k.trim()).filter(Boolean) : [fields.name];
+    const isExclusive = category === cfg.exclusive_category;
 
-    // Titles: only one active per owner
-    const makeActive = category === 'title' && (fields.active === undefined || fields.active === 'true' || fields.active === true);
+    // Exclusive categories (e.g. title): only one active per owner
+    const makeActive = isExclusive && (fields.active === undefined || fields.active === 'true' || fields.active === true);
     if (makeActive)
-        state.abilities.forEach(a => { if (a.category === 'title' && a.entity_slug === ownerSlug) a.active = false; });
+        state.abilities.forEach(a => { if (a.category === cfg.exclusive_category && a.entity_slug === ownerSlug) a.active = false; });
 
     const ability = {
         id: `${category}:${ownerSlug}:${slug}`,
         name:        fields.name,
         category,
-        activation:  fields.activation  || 'always',
+        activation:  fields.activation  || cfg.default_activation,
         description: fields.description || '',
         effects:     fields.effects     || '',
         entity_slug: ownerSlug,
-        active:      category === 'title' ? makeActive : true,
+        active:      isExclusive ? makeActive : true,
         stat_changes: fields.stat_changes || '',
         keywords,
     };
@@ -102,10 +112,11 @@ function buildAbilityContextString(abilities) {
     if (!abilities || !abilities.length) return '';
     const own = abilities.filter(a => a.entity_slug === 'player');
     if (!own.length) return '';
+    const ex = abilityCfg().exclusive_category;
     const parts = [];
-    const activeTitle = own.find(a => a.category === 'title' && a.active);
+    const activeTitle = own.find(a => a.category === ex && a.active);
     if (activeTitle) parts.push(`Active Title: ${activeTitle.name}`);
-    const named = own.filter(a => a.category !== 'title').map(a => a.name);
+    const named = own.filter(a => a.category !== ex).map(a => a.name);
     if (named.length) parts.push(`Abilities: ${named.join(', ')}`);
     return parts.join('\n');
 }
@@ -166,7 +177,7 @@ function cmdAbilities(state) {
     const all = (state.abilities || []).filter(a => a.entity_slug === 'player');
     if (!all.length) return 'No abilities recorded.';
     const parts = [];
-    for (const cat of ABILITY_CATEGORIES) {
+    for (const cat of abilityCfg().categories) {
         const list = all.filter(a => a.category === cat);
         if (!list.length) continue;
         parts.push(`**${cat[0].toUpperCase() + cat.slice(1)}s**`);

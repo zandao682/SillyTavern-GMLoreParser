@@ -10,6 +10,15 @@
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+function questCfg() {
+    const q = getSystemDef().quests || {};
+    return {
+        statuses:         q.statuses         || ['Active', 'Paused', 'Completed', 'Failed'],
+        default_category: q.default_category || 'Side',
+        default_status:   q.default_status   || 'Active',
+    };
+}
+
 /** Parse the objectives: multi-line field into an array of { text, done } objects. */
 function parseObjectives(raw) {
     const lines = raw.split('\n').map(l => l.trim()).filter(Boolean);
@@ -52,8 +61,8 @@ async function processQuestBlock(fields, settings) {
     const quest = {
         title,
         rank:        fields.rank      || '',
-        category:    fields.category  || 'Side',
-        status:      fields.status    || 'Active',
+        category:    fields.category  || questCfg().default_category,
+        status:      fields.status    || questCfg().default_status,
         description: fields.description || fields.summary || '',
         objectives:  fields.objectives ? parseObjectives(fields.objectives) : [],
         rewards:     fields.rewards   || '',
@@ -84,7 +93,7 @@ async function applyQuestUpdate(raw, settings) {
     const state = getCharState();
     if (!state.quests[slug]) {
         // Auto-create minimal quest if not yet registered
-        state.quests[slug] = { title, rank: '', category: '', status: 'Active', objectives: [], rewards: '', notes: '', history: [] };
+        state.quests[slug] = { title, rank: '', category: '', status: questCfg().default_status, objectives: [], rewards: '', notes: '', history: [] };
     }
     const quest = state.quests[slug];
 
@@ -118,7 +127,7 @@ async function applyQuestUpdate(raw, settings) {
 // ── Context string ────────────────────────────────────────────────────────────
 
 function buildQuestContextString(quests) {
-    const active = Object.values(quests).filter(q => q.status === 'Active');
+    const active = Object.values(quests).filter(q => q.status === questCfg().default_status);
     if (!active.length) return '';
     const lines = ['[Active Quests]'];
     for (const q of active) {
@@ -135,8 +144,9 @@ function buildQuestContextString(quests) {
 function buildQuestPanelHTML(quests) {
     const all = Object.values(quests);
     if (!all.length) return '<div class="glp-panel-empty">No quests recorded.</div>';
-    const statusOrder = { Active: 0, Paused: 1, Completed: 2, Failed: 3 };
-    const sorted = [...all].sort((a, b) => (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9));
+    const order = questCfg().statuses;
+    const rankOf = s => { const i = order.indexOf(s); return i === -1 ? 99 : i; };
+    const sorted = [...all].sort((a, b) => rankOf(a.status) - rankOf(b.status));
     return sorted.map(q => {
         const statusClass = `glp-quest-${(q.status || 'active').toLowerCase()}`;
         const rankBadge   = q.rank ? `<span class="glp-rank-badge">${q.rank}</span>` : '';
@@ -157,7 +167,9 @@ function cmdQuests(state) {
     const quests = state.quests || {};
     if (!Object.keys(quests).length) return '[Quests]\nNo quests recorded.';
     const lines = ['[Quests]'];
-    const groups = { Active: [], Completed: [], Failed: [], Paused: [], Other: [] };
+    const groups = {};
+    for (const s of questCfg().statuses) groups[s] = [];
+    groups.Other = [];
     for (const q of Object.values(quests)) (groups[q.status] || groups.Other).push(q);
     for (const [status, list] of Object.entries(groups)) {
         if (!list.length) continue;

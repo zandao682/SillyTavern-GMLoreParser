@@ -1,10 +1,11 @@
 /**
- * GM Lore Parser — SillyTavern Extension  v8.0.0
+ * GM Lore Parser — SillyTavern Extension  v9.0.0
  *
  * Entry point only. All logic lives in modules/. Load order matters:
- * state → utils → lorebook → schema → skills → domain → lore → sheet
- *   → creation → quests → reputation → events → currency → boons → needs
- *   → commands → panel → context
+ * state → utils → lorebook → system → schema → entity → companions →
+ *   progression → inventory → skills → domain → lore → sheet → creation →
+ *   quests → reputation → events → currency → abilities → needs →
+ *   commands → panel → context
  *
  * To add a new block type:
  *   1. Add its begin/end strings to UPDATE_BLOCKS or SHEET_BLOCKS in modules/state.js
@@ -25,15 +26,18 @@ var GLP_MODULE_LOAD_ORDER = [
     'system',     // system definition (ruleset) — getSystemDef, evalFormula
     'schema',     // schema engine (applyFieldValue, regen, promotions)
     'entity',     // unified entity core (player/npc/companion/creature) + dispatcher
+    'companions', // companion entity-type rules (loyalty, control, AP, legion)
+    'progression',// rank ladders + XP awards
+    'inventory',  // equipment slots, inventory model, item box
     'skills',     // skill system (PP + use_tracked)
     'domain',     // domain sub-game
-    'lore',       // npc storage internals, item, generic lore handlers
+    'lore',       // npc storage internals, item, location, generic lore handlers
     'sheet',      // player sheet + world time
     'creation',   // interactive character creation session
     'quests',     // quest tracker
     'reputation', // faction reputation
     'events',     // world events + plot lorebook
-    'currency',   // currency, rank, companions, XP
+    'currency',   // pure wealth tracking
     'abilities',  // unified abilities (boon/title/passive/trait/evolution)
     'needs',      // life simulation needs meters
     'commands',   // # command interceptor
@@ -212,6 +216,9 @@ async function onMessageReceived(messageId) {
         { if (applyNeedsUpdate(b.raw)) sheetChanged = true; }
     }
 
+    for (const b of extractBlocks(text, SHEET_BLOCKS.ITEM_BOX_UPDATE.begin, SHEET_BLOCKS.ITEM_BOX_UPDATE.end))
+        { if (applyItemBoxUpdate(b.raw)) sheetChanged = true; }
+
     // ── Lore blocks (Location / Faction / Item / Rule / Event / Quest) ─────────
     if (settings.campaignLorebook) {
         for (const [type, cfg] of Object.entries(LORE_BLOCKS)) {
@@ -219,6 +226,7 @@ async function onMessageReceived(messageId) {
                 const fields = parseFields(b.raw); fields._raw = b.raw;
                 let ok = false;
                 if (type === 'ITEM')          ok = await processItemBlock(fields, settings);
+                else if (type === 'LOCATION') ok = await processLocationBlock(fields, settings);
                 else if (type === 'QUEST')    { if (featureOn('quests')) ok = await processQuestBlock(fields, settings); }
                 else if (type === 'FACTION')  { if (featureOn('reputation')) ok = await processFactionBlock(fields, settings); }
                 else ok = await processGenericLore(type, cfg, fields, settings);
@@ -240,6 +248,9 @@ async function onMessageReceived(messageId) {
         if (featureOn('world_events'))
         for (const b of extractBlocks(text, UPDATE_BLOCKS.WORLD_EVENT_UPDATE.begin, UPDATE_BLOCKS.WORLD_EVENT_UPDATE.end))
             if (await applyWorldEventUpdate(b.raw, settings)) loreSaved++;
+
+        for (const b of extractBlocks(text, UPDATE_BLOCKS.LOCATION_MEMORY.begin, UPDATE_BLOCKS.LOCATION_MEMORY.end))
+            if (await processLocationMemory(b.raw, settings)) loreSaved++;
     }
 
     // ── Post-processing ───────────────────────────────────────────────────────
@@ -348,6 +359,7 @@ async function renderSettingsPanel() {
         <small>Plot entries go here. Auto-created if blank.</small>
       </div>
       <label class="glp-row"><input type="checkbox" id="glp-inject-ctx"   ${settings.injectIntoContext?'checked' : ''}><span>Inject state into context</span></label>
+      <label class="glp-row"><input type="checkbox" id="glp-inject-res"   ${settings.injectResolution!==false?'checked' : ''}><span>Inject resolution mechanic into context</span></label>
       <div class="glp-field-setting">
         <label for="glp-ctx-depth">Context injection depth</label>
         <input type="number" id="glp-ctx-depth" class="text_pole" min="0" max="20" value="${settings.contextDepth}">
@@ -359,7 +371,7 @@ async function renderSettingsPanel() {
         <div class="glp-field-setting"><label>Rule order</label><input  type="number" id="glp-rule-order"  class="text_pole" min="1" max="999" value="${settings.ruleOrder}"></div>
       </div>
       <div class="glp-info">
-        <b>v9 — modular build.</b> Modules: state · utils · lorebook · system · schema · entity · skills · domain · lore · sheet · creation · quests · reputation · events · currency · abilities · needs · commands · panel · context<br>
+        <b>v9 — modular build.</b> Modules: state · utils · lorebook · system · schema · entity · companions · progression · inventory · skills · domain · lore · sheet · creation · quests · reputation · events · currency · abilities · needs · commands · panel · context<br>
         <b>Skill modes:</b> pp (multi-tier, configurable) · use_tracked (threshold counter)<br>
         <b>Add a block type:</b> edit modules/state.js (registry) + add handler in the appropriate module
       </div>
@@ -386,6 +398,7 @@ async function renderSettingsPanel() {
     $('#glp-show-needs').on('change',    function()  { getSettings().showNeedsPanel   = this.checked; refreshStatusPanel(); save(); });
     $('#glp-plot-lorebook').on('change', function() { getSettings().plotLorebook      = this.value;   save(); });
     $('#glp-inject-ctx').on('change', function()    { getSettings().injectIntoContext = this.checked; injectCharacterContext(); save(); });
+    $('#glp-inject-res').on('change', function()    { getSettings().injectResolution = this.checked; injectCharacterContext(); save(); });
     $('#glp-ctx-depth').on('change', function()  { getSettings().contextDepth     = parseInt(this.value) || 1; injectCharacterContext(); save(); });
     $('#glp-scan-depth').on('change', function() { getSettings().defaultScanDepth = parseInt(this.value) || 4; save(); });
     $('#glp-lore-order').on('change', function() { getSettings().loreOrder        = parseInt(this.value) || 100; save(); });

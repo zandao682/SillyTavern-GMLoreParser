@@ -23,10 +23,13 @@ v9 is a system-agnostic rebuild. Nothing about any one game is hardcoded:
 The extension is a single entry point (`index.js`) that loads `modules/` in order:
 
 ```
-state · utils · lorebook · system · schema · entity · skills · domain ·
-lore · sheet · creation · quests · reputation · events · currency ·
-abilities · needs · commands · panel · context
+state · utils · lorebook · system · schema · entity · companions ·
+progression · inventory · skills · domain · lore · sheet · creation ·
+quests · reputation · events · currency · abilities · needs ·
+commands · panel · context
 ```
+
+Companions (loyalty / control / AP / legion) live in `companions.js` as a companion entity-type module; rank ladders + XP in `progression.js`; equipment slots / inventory model / item box in `inventory.js`. `currency.js` is pure wealth.
 
 To add a block type: register its tags in `modules/state.js`, write a handler in the relevant module, and dispatch it in `index.js` `onMessageReceived`.
 
@@ -129,21 +132,71 @@ item_conditions:
 loyalty:
   scale: 0-100
   initial: 50
+
+resolution:
+  mechanic: d20 + modifier vs. DC
+  difficulty: Easy 10 / Medium 15 / Hard 20 / Very Hard 25
+  crit: Nat 20 success; nat 1 failure
+
+quests:
+  categories: Main, Side, Personal, Guild
+  statuses: Active, Paused, Completed, Failed
+world_events:
+  statuses: Ongoing, Averted, Resolved
+factions:
+  attitudes: Unknown, Hostile, Wary, Neutral, Cordial, Allied
+  default_attitude: Unknown
+companions:
+  roles: standard, lieutenant
+  lieutenant_role: lieutenant
+  statuses: Active, Inactive, Dismissed, Dead
+abilities:
+  categories: boon, title, passive, trait, evolution
+  exclusive_category: title
+
+inventory:
+  model: slots            # freeform | slots | weight
+  capacity: 30
+  unit: slots
+  item_box: true
+equipment:
+  enabled: true
+  slot: head | Head
+  slot: main_hand | Main Hand
+  slot: body | Body
+
+locations:
+  types: Settlement, Wilderness, Dungeon, Landmark, Instance
+  create_history_lorebook: true
+  instance.enabled: true
+  instance.types: Solo, Party, Raid
+
+commands:
+  command: Party
+    triggers: #party, #companions
+    view: companions
+  command: Wounds
+    triggers: #wounds
+    template: HP {hp}/{hp_max} — {conditions}
 [SYSTEM_DEF_END]
 ```
 
 **Every section is optional** and merges over the built-in defaults:
 
-- `features:` — a comma list of the **enabled** subsystems. Anything omitted is disabled: its blocks no-op, its panel section hides, its context injection is suppressed, and its `#commands` report nothing. Omit the whole section to keep all features on.
+- `features:` — a comma list of the **enabled** subsystems (skills, ranks, reputation, currency, needs, companions, domains, quests, abilities, world_events, equipment). Anything omitted is disabled: its blocks no-op, its panel section hides, its context injection is suppressed, and its commands drop out. Omit the whole section to keep all features on.
 - `progression:` — `levels:false`/`xp:false` produce a levelless / XP-less system. `level` is exposed to formulas only when `levels:true`.
-- `identity:` — declared identity fields beyond the always-present `name` (e.g. class/background/race). A classless system simply omits `class`.
-- `classes:` — an optional catalogue. Each `option:` is a build template (attribute modifiers + granted skills/abilities). The same shape, via `category`, can hold races/backgrounds/origins. Selecting one during creation applies its modifiers and grants.
-- `attributes:` / `derived:` — `key | label | abbr` rows and `key = formula -> target[, also…]` rows. Formulas may reference any attribute (by key or abbr) and declared `variables`, and are evaluated with a strict arithmetic-only whitelist (no code execution).
+- `identity:` / `classes:` — declared identity fields (class/background/race) and an optional class catalogue (modifiers + granted skills/abilities; same shape serves races/backgrounds).
+- `attributes:` / `derived:` — `key | label | abbr` rows and `key = formula -> target[, also…]` rows, evaluated with a strict arithmetic-only whitelist (no code execution).
 - `reputation:` / `loyalty:` — custom `scale: min-max`, `initial`, and tier names.
-- `skills:` — `enabled`/`leveled` toggles, tier names, `levels_per_tier`, and the `pp_per_level` / `score` formulas.
-- `needs:`, `item_conditions:`, `rank_ladder:` — life-sim thresholds, durability bands, and the rank progression.
+- `skills:` — `enabled`/`leveled` toggles, tier names, `levels_per_tier`, `pp_per_level` / `score` formulas.
+- `resolution:` — documents how checks are resolved (d20 vs DC, d100 roll-under, dice pool, 2d6+mod, …). The extension never rolls; this is injected into context so the GM resolves checks consistently.
+- **Vocabularies** — `quests`, `world_events`, `factions`, `companions`, `abilities` let a system rename statuses/categories/roles/attitudes and their defaults.
+- **Possessions** — `inventory` (model `freeform`/`slots`/`weight` + `capacity`/`unit`, optional `item_box`) and `equipment` (system-defined `slot:` set, gated by `features.equipment`).
+- `locations:` — location `types`, whether discovery auto-creates a per-location history lorebook, and an optional `instances` subtype (only when `instance.enabled`).
+- `commands:` — reshape the `#` command set: alias/rename a built-in `view`, or add a custom command whose `template` renders `{tokens}` against character state. When present it defines the active set (plus always-on `#status`/`#vitals`/`#system`/`#help`).
+- `needs:`, `item_conditions:`, `rank_ladder:` — life-sim thresholds, durability bands, rank progression.
 
-Item-box, instances/dungeons, and death/resurrection are intentionally **not** tracked subsystems — they are GM narrative (item storage uses the `inventory` list, instances use `WORLD_EVENT`, death is HP→0 prose).
+Death/resurrection remains GM narrative (HP→0 prose). Instances are a **location subtype**, not a separate subsystem; the item box is just an optional second inventory with item conditions.
 
 ---
 
@@ -281,7 +334,8 @@ keywords: ember, fire blade
 - **Needs / life-sim** — `[NEEDS_SYSTEM]` configures meters; `[NEEDS_UPDATE]` changes them (context injection only fires when a need is at/under its warn threshold). Needs can also be modeled as schema fields with negative `regen_rate`.
 - **World time** — `[WORLD_TIME]` advances the clock and applies resource regen + use-tracked checks to the player and all schema-bearing NPCs.
 - **Item** — `[ITEM_BEGIN]` / `[ITEM_UPDATE]`; condition labels derive from the system's `item_conditions`.
-- **Lore** — `[LOCATION_BEGIN]`, `[RULE_BEGIN]`, `[EVENT_BEGIN]`.
+- **Possessions** — equip/unequip via `[ENTITY_UPDATE]` (`equip: <slot>=<item>` / `unequip: <slot>`); `[ITEM_BOX_UPDATE]` (`add: <item> | <condition>` / `remove: <item>`) for the optional item box.
+- **Locations** — `[LOCATION_BEGIN]` (type/description/region, optional `instance`/`instance_type`) auto-creates a `location-{slug}` history lorebook; `[LOCATION_MEMORY]` appends to it. `[RULE_BEGIN]`, `[EVENT_BEGIN]` are generic lore.
 - **Designer** — `[CARD_OUTPUT]` (Architect only) downloads a generated GM card as JSON.
 
 ---
@@ -307,15 +361,21 @@ Typed by the player; answered locally without calling the model.
 | `#companions [name]` | Companion roster (optional filter) |
 | `#legion` / `#hierarchy` | Full command delegation tree |
 | `#boons` / `#titles` / `#abilities` | Abilities by category |
+| `#equipment` | Equipped items by slot |
+| `#itembox` | Item box contents |
 | `#needs` | Life-simulation meters |
+| `#locations` | Location types & info |
 | `#inspect [target]` | Inspect a target by Awareness tier |
+| `#system` / `#ruleset` | System definition & resolution mechanic |
 | `#help` | Command list |
+
+The active command set is feature-gated (a command for a disabled feature drops out) and fully reshapeable via the System Definition's `commands:` section — alias/rename built-ins or add custom `{token}`-template commands. `#help` is generated from the active set.
 
 ---
 
 ## Status panel
 
-A live, schema-driven panel renders above the chat input: identity + active title, grouped fields (bars/values/pools/lists), and collapsible sections for needs, skills, domains, quests, reputation, world events, currency & companions, and abilities & titles. During an active creation session it shows the creation step checklist instead. Disabled features and empty sections are hidden.
+A live, schema-driven panel renders above the chat input: identity + active title, grouped fields (bars/values/pools/lists), and collapsible sections for needs, skills, domains, quests, reputation, world events, currency, rank, companions, equipment & inventory, and abilities & titles. During an active creation session it shows the creation step checklist instead. Disabled features and empty sections are hidden.
 
 ---
 

@@ -153,6 +153,7 @@ function parseSchema(raw) {
             case 'type':            fd.type           = val; break;
             case 'group':           fd.group          = val; break;
             case 'max_field':       fd.max_field      = val; break;
+            case 'separator':       fd.separator      = val; break;
             case 'color':           fd.color          = val; break;
             case 'mutability':      fd.mutability     = val; break;
             case 'gm_mutable':      fd.gm_mutable     = val.toLowerCase() === 'true'; break;

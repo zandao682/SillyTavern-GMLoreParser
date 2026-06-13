@@ -33,6 +33,7 @@ var UPDATE_BLOCKS = {
     QUEST_UPDATE:       { begin: '[QUEST_UPDATE_BEGIN]',       end: '[QUEST_UPDATE_END]'       },
     FACTION_UPDATE:     { begin: '[FACTION_UPDATE_BEGIN]',     end: '[FACTION_UPDATE_END]'     },
     WORLD_EVENT_UPDATE: { begin: '[WORLD_EVENT_UPDATE_BEGIN]', end: '[WORLD_EVENT_UPDATE_END]' },
+    LOCATION_MEMORY:    { begin: '[LOCATION_MEMORY_BEGIN]',    end: '[LOCATION_MEMORY_END]'    },
 };
 
 var SHEET_BLOCKS = {
@@ -62,6 +63,8 @@ var SHEET_BLOCKS = {
     // ── Life simulation ───────────────────────────────────────────────────────
     NEEDS_SYSTEM: { begin: '[NEEDS_SYSTEM_BEGIN]', end: '[NEEDS_SYSTEM_END]' },
     NEEDS_UPDATE: { begin: '[NEEDS_UPDATE_BEGIN]', end: '[NEEDS_UPDATE_END]' },
+    // ── Possessions ─────────────────────────────────────────────────────────────
+    ITEM_BOX_UPDATE: { begin: '[ITEM_BOX_UPDATE_BEGIN]', end: '[ITEM_BOX_UPDATE_END]' },
     // ── System definition (ruleset) ─────────────────────────────────────────────
     SYSTEM_DEF:   { begin: '[SYSTEM_DEF_BEGIN]',   end: '[SYSTEM_DEF_END]'   },
 };
@@ -89,6 +92,7 @@ var DEFAULT_SETTINGS = Object.freeze({
     showEventsPanel: true, showCurrencyPanel: true,
     showBoonPanel: true, showNeedsPanel: true,
     interceptCommands: true, plotLorebook: '',
+    injectResolution: true,
 });
 
 var DEFAULT_CHAR_STATE = Object.freeze({
@@ -99,10 +103,13 @@ var DEFAULT_CHAR_STATE = Object.freeze({
     attr_change_log: [],
     skill_system: {
         mode: 'use_tracked',
+        // tier_names / levels_per_tier / formulas are null → resolved from the
+        // active System Definition (getSystemDef().skills) at use-time. A per-chat
+        // [SKILL_SYSTEM] block can still set explicit overrides here.
         tier_names: null,
-        levels_per_tier: 10,
-        pp_per_level_formula: '100 * tier_rank',
-        score_formula: '10 + total_levels * 2.5',
+        levels_per_tier: null,
+        pp_per_level_formula: null,
+        score_formula: null,
         skills: {},
         branch_unlocks: [],
     },
@@ -125,6 +132,8 @@ var DEFAULT_CHAR_STATE = Object.freeze({
     },
     // ── v5 additions ──────────────────────────────────────────────────────
     system_def: null,     // active ruleset (see modules/system.js); null → DEFAULT_SYSTEM_DEF
+    equipment: {},        // slot_key → item name   (see modules/inventory.js)
+    item_box: [],         // [{ item, condition }]  optional extradimensional container
     schema_version: 5,
 });
 
@@ -172,6 +181,8 @@ function getCharState() {
     }
     // v5 migration
     if (s.system_def === undefined) s.system_def = null;
+    if (!s.equipment) s.equipment = {};
+    if (!s.item_box)  s.item_box  = [];
     if (!s.abilities) s.abilities = [];
     // Fold any pre-v5 boons/titles into the unified abilities list
     for (const b of (s.boons || []))

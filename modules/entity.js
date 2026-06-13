@@ -63,8 +63,8 @@ function entityApplyStatBlock(handle, fields) {
     for (const key of Object.keys(sf)) {
         if (fields[key] === undefined) continue;
         const desc = sf[key];
-        if (desc.type === 'list' || key === 'inventory' || key === 'conditions') {
-            const sep = key === 'inventory' ? ';' : ',';
+        if (desc.type === 'list') {
+            const sep = desc.separator || ',';
             values[key] = String(fields[key]).split(sep).map(s => s.trim()).filter(Boolean);
         } else {
             const n = parseFloat(fields[key]);
@@ -284,9 +284,15 @@ function playerEntityBegin(fields) {
 }
 
 function playerEntityUpdate(fields) {
+    // Equipment directives are handled by the inventory module, not as schema fields.
+    let equipChanged = false;
+    if (fields.equip || fields.unequip) {
+        equipChanged = applyEquipDirective(fields.equip, fields.unequip);
+        delete fields.equip; delete fields.unequip;
+    }
     const handle = makePlayerHandle();
     const r = entityApplyUpdate(handle, fields, { sysProtected: SYS_PROTECTED });
-    return r.changes.length > 0 ? r.changes : false;
+    return (r.changes.length > 0 || equipChanged) ? (r.changes.length ? r.changes : ['equipment']) : false;
 }
 
 function playerEntityEvent(fields) {
