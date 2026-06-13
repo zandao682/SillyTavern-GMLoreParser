@@ -1,0 +1,16 @@
+{
+    "display_name": "GM Lore Parser",
+    "name": "gm-lore-parser",
+    "version": "7.0.0",
+    "author": "your-name-here",
+    "description": "Parses structured GM output blocks ([NPC_BEGIN], [PLAYER_UPDATE_BEGIN], [WORLD_TIME_BEGIN], etc.) and automatically maintains campaign lorebooks, character state, NPC progression, skill systems, domain tracking, and a live status panel.",
+    "loading_order": 15,
+    "requires": [],
+    "optional": [],
+    "dependencies": [],
+    "js": "index.js",
+    "css": "style.css",
+    "homePage": "https://github.com/your-name-here/gm-lore-parser",
+    "auto_update": false,
+    "minimum_client_version": "1.12.0"
+}
