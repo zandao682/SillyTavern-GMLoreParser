@@ -329,37 +329,65 @@ function buildCapabilityContextString(caps) {
     return parts.join('\n');
 }
 
+/** Capitalize + naive-pluralize a category key for a section title. */
+function _capCategoryLabel(cat) {
+    const c = cat.charAt(0).toUpperCase() + cat.slice(1);
+    return /s$/.test(c) ? c : c + 's';
+}
+
+/** One uniform row for any capability — static or progressing. Progressing caps
+ *  add a tier/level/score tag + PP bar; static caps show an activation tag; both
+ *  share the same name + description/effects layout so nothing looks out of place. */
+function renderCapabilityRow(c, cfg) {
+    const p           = getProgression(c);
+    const progressing = progIsProgressing(p);
+    const isExclusive = c.category === cfg.exclusive_category;
+    const lead        = isExclusive ? (c.active ? '★ ' : '○ ') : '';
+
+    let tag = '';
+    if (progressing) {
+        const tier = progTierNames(p)[c.prog.tier_idx] || `Tier ${c.prog.tier_idx + 1}`;
+        tag = `<span class="glp-cap-tag">${tier} Lv${c.prog.level}${progHasScore(p) ? ` · ${c.prog.score}` : ''}</span>`;
+    } else if (c.activation && c.activation !== 'always') {
+        tag = `<span class="glp-cap-tag">${c.activation}</span>`;
+    }
+
+    let bar = '';
+    if (progressing && c.prog.points_needed > 0) {
+        const pct = Math.min(100, (c.prog.points / c.prog.points_needed) * 100);
+        bar = `<div class="glp-cap-bar-row"><div class="glp-cap-bar-wrap"><div class="glp-cap-bar" style="width:${pct}%"></div></div><span class="glp-cap-pp">${c.prog.points}/${c.prog.points_needed}</span></div>`;
+    }
+
+    const detail = c.effects || c.description || '';
+    return `<div class="glp-cap-row${isExclusive && c.active ? ' glp-cap-active' : ''}">
+        <div class="glp-cap-head"><span class="glp-cap-name">${lead}${c.name}</span>${tag}</div>
+        ${bar}
+        ${detail ? `<div class="glp-cap-desc">${detail}</div>` : ''}
+    </div>`;
+}
+
+/** Renders capabilities as one collapsible top-level section per category present
+ *  (Boons, Titles, Skills, …), in the System Definition's category order. */
 function buildCapabilityPanelHTML(caps, settings) {
     const own = _ownCaps({ capabilities: caps }, 'player');
     if (!own.length) return '';
     const cfg = capabilityCfg();
-    const titles = own.filter(c => c.category === cfg.exclusive_category);
-    const staticNon = own.filter(c => c.category !== cfg.exclusive_category && !progIsProgressing(getProgression(c)));
-    const progressing = own.filter(c => progIsProgressing(getProgression(c)));
 
-    // Header for the exclusive group derives from the configured category name
-    // (e.g. exclusive_category 'title' → "Titles", 'mark' → "Marks").
-    const exLabel = cfg.exclusive_category
-        ? cfg.exclusive_category[0].toUpperCase() + cfg.exclusive_category.slice(1) + 's' : '';
+    const byCat = {};
+    for (const c of own) (byCat[c.category] = byCat[c.category] || []).push(c);
+    const order = [...cfg.categories, ...Object.keys(byCat).filter(k => !cfg.categories.includes(k))];
 
-    const sections = [];
-    if (settings.showBoonPanel && (titles.length || staticNon.length)) {
-        const titleRows = titles.map(t =>
-            `<div class="glp-title-row${t.active ? ' glp-title-active' : ''}"><span class="glp-title-name">${t.active ? '★ ' : ''}${t.name}</span>${t.description ? `<span class="glp-title-desc">${t.description}</span>` : ''}</div>`).join('');
-        const abilityRows = staticNon.map(a =>
-            `<details class="glp-boon-row"><summary class="glp-boon-name">${a.name} <span class="glp-boon-type">[${a.category}]</span></summary>${a.description ? `<div class="glp-boon-desc">${a.description}</div>` : ''}${a.effects ? `<div class="glp-boon-effects">${a.effects}</div>` : ''}</details>`).join('');
-        sections.push(`<div class="glp-panel-section glp-boons-section">${titles.length ? `<div class="glp-boons-titles"><b>${exLabel}</b>${titleRows}</div>` : ''}${staticNon.length ? `<div class="glp-boons-list"><b>Abilities</b>${abilityRows}</div>` : ''}</div>`);
+    const out = [];
+    for (const cat of order) {
+        const members = byCat[cat];
+        if (!members || !members.length) continue;
+        const catProgressing = progIsProgressing(getProgression({ category: cat }));
+        // honor the two visibility toggles: skills vs abilities/titles
+        if (catProgressing ? settings.showSkillPanel === false : settings.showBoonPanel === false) continue;
+        const rows = members.map(c => renderCapabilityRow(c, cfg)).join('');
+        out.push(`<details class="glp-cap-cat glp-cap-cat-${cat}" open><summary>${_capCategoryLabel(cat)}</summary><div class="glp-cap-list">${rows}</div></details>`);
     }
-    if (settings.showSkillPanel && progressing.length) {
-        const rows = progressing.map(c => {
-            const p = getProgression(c);
-            const tier = progTierNames(p)[c.prog.tier_idx] || `Tier ${c.prog.tier_idx + 1}`;
-            const pct  = c.prog.points_needed > 0 ? Math.min(100, (c.prog.points / c.prog.points_needed) * 100) : 0;
-            return `<div class="glp-skill-row"><div class="glp-skill-name">${c.name}</div><div class="glp-skill-tier">${tier} Lv${c.prog.level}</div><div class="glp-skill-bar-wrap"><div class="glp-skill-bar" style="width:${pct}%"></div></div><div class="glp-skill-pp">${c.prog.points}/${c.prog.points_needed}</div>${progHasScore(p) ? `<div class="glp-skill-score">Score ${c.prog.score}</div>` : ''}</div>`;
-        }).join('');
-        sections.push(`<div class="glp-panel-section glp-skills-section">${rows}</div>`);
-    }
-    return sections.join('');
+    return out.join('');
 }
 
 // ── Generic command view (triggers are wired by the command-definition system) ──

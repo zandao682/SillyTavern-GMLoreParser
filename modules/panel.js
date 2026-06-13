@@ -124,10 +124,8 @@ function buildStatusPanelHTML(state) {
         ? `<span class="glp-world-time">${state.world_time.display}</span>` : '';
 
     const settings     = getSettings();
-    const _capHtml      = featureOn('capabilities') ? buildCapabilityPanelHTML(state.capabilities || {}, settings) : '';
-    const capabilityHtml = _capHtml
-        ? `<details class="glp-boon-details open"><summary>Capabilities</summary>
-           <div class="glp-boon-panel">${_capHtml}</div></details>` : '';
+    // One top-level collapsible section per capability category (Boons, Titles, Skills, …).
+    const capabilityHtml = featureOn('capabilities') ? buildCapabilityPanelHTML(state.capabilities || {}, settings) : '';
     const domainHtml   = settings.showDomainPanel && featureOn('domains') && Object.keys(state.domains || {}).length
         ? `<details class="glp-domain-details"><summary>Domains</summary>
            <div class="glp-domain-panel">${buildDomainPanelHTML(state.domains)}</div></details>` : '';

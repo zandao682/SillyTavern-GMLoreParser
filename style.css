@@ -78,25 +78,58 @@
     font-size: 0.85em;
 }
 
-/* Every feature subsystem is a uniform, top-level collapsible section. */
+/* Every feature subsystem is a uniform, top-level collapsible section. The
+   `padding:0`/`margin:0` reset overrides the older per-class details padding
+   (e.g. .glp-quest-details / .glp-domain-details added a 10px left inset) so
+   Domains/Quests/Reputation/etc. line up flush with Needs/Capabilities/Rank. */
 #glp-status-panel > details {
+    margin: 0;
+    padding: 0;
     border-top: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.1));
 }
 #glp-status-panel > details > summary {
     cursor: pointer; user-select: none;
-    padding: 7px 10px;
+    position: relative;                 /* anchor for the hanging disclosure marker */
+    margin: 0;
+    padding: 7px 10px;                  /* header text flush at the panel baseline */
     font-size: 0.82em; font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.06em;
     color: var(--SmartThemeBodyColor, #ddd);
     list-style: none;
 }
 #glp-status-panel > details > summary::-webkit-details-marker { display: none; }
+/* Disclosure triangle hangs in the left gutter so it doesn't push the header
+   text inward — headers stay flush; the items below carry the indent. */
 #glp-status-panel > details > summary::before {
-    content: '▸'; display: inline-block; width: 1em;
+    content: '▸'; position: absolute; left: 2px; top: 7px;
     color: var(--SmartThemeEmColor, #888); transition: transform 0.15s;
 }
 #glp-status-panel > details[open] > summary::before { transform: rotate(90deg); }
-#glp-status-panel > details > *:not(summary) { padding: 0 10px 8px; }
+#glp-status-panel > details > *:not(summary) { padding: 2px 10px 10px 22px; }
+
+/* Capability category sections — uniform rows for static & progressing alike */
+.glp-cap-list { display: flex; flex-direction: column; gap: 7px; }
+.glp-cap-row { display: flex; flex-direction: column; gap: 2px; }
+.glp-cap-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.glp-cap-name { font-weight: 600; color: var(--SmartThemeBodyColor, #ddd); }
+.glp-cap-active .glp-cap-name { color: var(--SmartThemeQuoteColor, #9b8fd6); }
+.glp-cap-tag {
+    font-size: 0.82em; white-space: nowrap;
+    color: var(--SmartThemeEmColor, #999);
+}
+.glp-cap-desc {
+    font-size: 0.85em; color: var(--SmartThemeEmColor, #aaa); line-height: 1.25;
+}
+.glp-cap-bar-row { display: flex; align-items: center; gap: 6px; }
+.glp-cap-bar-wrap {
+    flex: 1; height: 5px; border-radius: 3px; overflow: hidden;
+    background: rgba(255,255,255,0.08);
+}
+.glp-cap-bar {
+    height: 100%; border-radius: 3px; transition: width 0.3s;
+    background: var(--SmartThemeQuoteColor, #9b8fd6);
+}
+.glp-cap-pp { font-size: 0.72em; color: var(--SmartThemeEmColor, #999); white-space: nowrap; }
 
 /* Carried-inventory clickable items */
 .glp-inv-items { display: flex; flex-wrap: wrap; gap: 4px; }
