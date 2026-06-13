@@ -27,25 +27,37 @@ var LORE_BLOCKS = {
     BESTIARY: { begin: '[BESTIARY_BEGIN]', end: '[BESTIARY_END]', label: 'Bestiary' },
     RULE:     { begin: '[RULE_BEGIN]',     end: '[RULE_END]',     label: 'Rule'     },
     EVENT:    { begin: '[EVENT_BEGIN]',    end: '[EVENT_END]',    label: 'Event'    },
+    QUEST:    { begin: '[QUEST_BEGIN]',    end: '[QUEST_END]',    label: 'Quest'    },
 };
 
 var UPDATE_BLOCKS = {
-    NPC_UPDATE:      { begin: '[NPC_UPDATE_BEGIN]',      end: '[NPC_UPDATE_END]'      },
-    NPC_ATTR_CHANGE: { begin: '[NPC_ATTR_CHANGE_BEGIN]', end: '[NPC_ATTR_CHANGE_END]' },
-    NPC_MEMORY:      { begin: '[NPC_MEMORY_BEGIN]',      end: '[NPC_MEMORY_END]'      },
-    ITEM_UPDATE:     { begin: '[ITEM_UPDATE_BEGIN]',     end: '[ITEM_UPDATE_END]'     },
+    NPC_UPDATE:         { begin: '[NPC_UPDATE_BEGIN]',         end: '[NPC_UPDATE_END]'         },
+    NPC_ATTR_CHANGE:    { begin: '[NPC_ATTR_CHANGE_BEGIN]',    end: '[NPC_ATTR_CHANGE_END]'    },
+    NPC_MEMORY:         { begin: '[NPC_MEMORY_BEGIN]',         end: '[NPC_MEMORY_END]'         },
+    ITEM_UPDATE:        { begin: '[ITEM_UPDATE_BEGIN]',        end: '[ITEM_UPDATE_END]'        },
+    QUEST_UPDATE:       { begin: '[QUEST_UPDATE_BEGIN]',       end: '[QUEST_UPDATE_END]'       },
+    FACTION_UPDATE:     { begin: '[FACTION_UPDATE_BEGIN]',     end: '[FACTION_UPDATE_END]'     },
+    WORLD_EVENT_UPDATE: { begin: '[WORLD_EVENT_UPDATE_BEGIN]', end: '[WORLD_EVENT_UPDATE_END]' },
 };
 
 var SHEET_BLOCKS = {
-    PLAYER_SHEET:    { begin: '[PLAYER_SHEET_BEGIN]',    end: '[PLAYER_SHEET_END]'    },
-    PLAYER_UPDATE:   { begin: '[PLAYER_UPDATE_BEGIN]',   end: '[PLAYER_UPDATE_END]'   },
-    ATTR_CHANGE:     { begin: '[ATTR_CHANGE_BEGIN]',     end: '[ATTR_CHANGE_END]'     },
-    WORLD_TIME:      { begin: '[WORLD_TIME_BEGIN]',      end: '[WORLD_TIME_END]'      },
-    SKILL_UPDATE:    { begin: '[SKILL_UPDATE_BEGIN]',    end: '[SKILL_UPDATE_END]'    },
-    SKILL_SYSTEM:    { begin: '[SKILL_SYSTEM_BEGIN]',    end: '[SKILL_SYSTEM_END]'    },
-    DOMAIN_UPDATE:   { begin: '[DOMAIN_UPDATE_BEGIN]',   end: '[DOMAIN_UPDATE_END]'   },
-    COMMAND_RESPONSE:{ begin: '[COMMAND_RESPONSE_BEGIN]',end: '[COMMAND_RESPONSE_END]'},
-    CARD_OUTPUT:     { begin: '[CARD_OUTPUT_BEGIN]',     end: '[CARD_OUTPUT_END]'     },
+    PLAYER_SHEET:      { begin: '[PLAYER_SHEET_BEGIN]',      end: '[PLAYER_SHEET_END]'      },
+    PLAYER_UPDATE:     { begin: '[PLAYER_UPDATE_BEGIN]',     end: '[PLAYER_UPDATE_END]'     },
+    ATTR_CHANGE:       { begin: '[ATTR_CHANGE_BEGIN]',       end: '[ATTR_CHANGE_END]'       },
+    WORLD_TIME:        { begin: '[WORLD_TIME_BEGIN]',        end: '[WORLD_TIME_END]'        },
+    SKILL_UPDATE:      { begin: '[SKILL_UPDATE_BEGIN]',      end: '[SKILL_UPDATE_END]'      },
+    SKILL_SYSTEM:      { begin: '[SKILL_SYSTEM_BEGIN]',      end: '[SKILL_SYSTEM_END]'      },
+    DOMAIN_UPDATE:     { begin: '[DOMAIN_UPDATE_BEGIN]',     end: '[DOMAIN_UPDATE_END]'     },
+    REPUTATION_UPDATE: { begin: '[REPUTATION_UPDATE_BEGIN]', end: '[REPUTATION_UPDATE_END]' },
+    WORLD_EVENT:       { begin: '[WORLD_EVENT_BEGIN]',       end: '[WORLD_EVENT_END]'       },
+    PLOT_ENTRY:        { begin: '[PLOT_ENTRY_BEGIN]',        end: '[PLOT_ENTRY_END]'        },
+    CURRENCY_UPDATE:   { begin: '[CURRENCY_UPDATE_BEGIN]',   end: '[CURRENCY_UPDATE_END]'   },
+    RANK_CHANGE:       { begin: '[RANK_CHANGE_BEGIN]',       end: '[RANK_CHANGE_END]'       },
+    XP_AWARD:          { begin: '[XP_AWARD_BEGIN]',          end: '[XP_AWARD_END]'          },
+    COMPANION_UPDATE:  { begin: '[COMPANION_UPDATE_BEGIN]',  end: '[COMPANION_UPDATE_END]'  },
+    EVOLUTION:         { begin: '[EVOLUTION_BEGIN]',         end: '[EVOLUTION_END]'         },
+    COMMAND_RESPONSE:  { begin: '[COMMAND_RESPONSE_BEGIN]',  end: '[COMMAND_RESPONSE_END]'  },
+    CARD_OUTPUT:       { begin: '[CARD_OUTPUT_BEGIN]',       end: '[CARD_OUTPUT_END]'       },
 };
 
 // Fields that carry metadata about the lorebook entry itself (not game data)
@@ -67,7 +79,9 @@ var DEFAULT_SETTINGS = Object.freeze({
     ruleOrder: 50, loreOrder: 100, defaultScanDepth: 4,
     showStatusPanel: true, injectIntoContext: true, contextDepth: 1,
     showSkillPanel: true, showDomainPanel: true,
-    interceptCommands: true,
+    showQuestPanel: true, showRepPanel: true,
+    showEventsPanel: true, showCurrencyPanel: true,
+    interceptCommands: true, plotLorebook: '',
 });
 
 var DEFAULT_CHAR_STATE = Object.freeze({
@@ -86,7 +100,15 @@ var DEFAULT_CHAR_STATE = Object.freeze({
         branch_unlocks: [],
     },
     domains: {},
-    schema_version: 2,
+    // ── v3 additions ──────────────────────────────────────────────────────
+    quests: {},           // slug → { title, rank, category, status, objectives[], rewards, notes, history[] }
+    factions: {},         // slug → { name, type, goals, leadership, resources, attitude_to_party, keywords[], notes, history[] }
+    reputation: {},       // slug → { name, standing, tier, tier_labels[], history[] }
+    world_events: [],     // [{ id, title, date, location, description, consequences, status, resolution }]
+    currency: {},         // denomination → amount   e.g. { copper: 0, silver: 0, gold: 0 }
+    companions: {},       // slug → { name, type, control_cost, loyalty, status, notes }
+    adventurer_rank: { rank: 'F', rank_ladder: null, quest_count: 0, history: [] },
+    schema_version: 3,
 });
 
 // ── State accessors ───────────────────────────────────────────────────────────
@@ -110,8 +132,16 @@ function getCharState() {
     if (!s.values)          s.values          = {};
     if (!s.world_time)      s.world_time      = structuredClone(DEFAULT_CHAR_STATE.world_time);
     if (!s.attr_change_log) s.attr_change_log = [];
-    if (!s.skill_system)    s.skill_system    = structuredClone(DEFAULT_CHAR_STATE.skill_system);
-    if (!s.domains)         s.domains         = {};
+    if (!s.skill_system)     s.skill_system     = structuredClone(DEFAULT_CHAR_STATE.skill_system);
+    if (!s.domains)          s.domains          = {};
+    // v3 migration
+    if (!s.quests)           s.quests           = {};
+    if (!s.factions)         s.factions         = {};
+    if (!s.reputation)       s.reputation       = {};
+    if (!s.world_events)     s.world_events     = [];
+    if (!s.currency)         s.currency         = {};
+    if (!s.companions)       s.companions       = {};
+    if (!s.adventurer_rank)  s.adventurer_rank  = structuredClone(DEFAULT_CHAR_STATE.adventurer_rank);
     return s;
 }
 

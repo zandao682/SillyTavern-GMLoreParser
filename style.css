@@ -345,3 +345,176 @@
     white-space: pre-wrap; word-break: break-word;
     background: none; border: none;
 }
+
+/* ── Shared details/panel pattern (quests, rep, events, currency) ─────────── */
+
+.glp-quest-details, .glp-rep-details,
+.glp-events-details, .glp-currency-details {
+    padding: 2px 10px 5px;
+    border-top: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.06));
+}
+
+.glp-quest-details summary, .glp-rep-details summary,
+.glp-events-details summary, .glp-currency-details summary {
+    cursor: pointer; font-size: 0.78em; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--SmartThemeEmColor, #999); user-select: none;
+    padding: 3px 0;
+}
+
+.glp-quest-panel, .glp-rep-panel,
+.glp-events-panel, .glp-currency-panel {
+    padding-top: 5px;
+    display: flex; flex-direction: column; gap: 3px;
+}
+
+.glp-panel-empty {
+    font-size: 0.8em; font-style: italic;
+    color: var(--SmartThemeEmColor, #888); padding: 4px 0;
+}
+
+/* ── Rank badge (shared) ─────────────────────────────────────────────────── */
+
+.glp-rank-badge {
+    font-size: 0.72em; font-weight: 700;
+    background: var(--SmartThemeQuoteColor, #9b8fd6);
+    color: #fff;
+    border-radius: 3px; padding: 0 5px; margin-left: 4px;
+    vertical-align: middle;
+}
+
+/* ── Quest panel ─────────────────────────────────────────────────────────── */
+
+.glp-quest-row {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 0.82em; padding: 2px 2px;
+    border-radius: 3px;
+}
+
+.glp-quest-title { flex: 1; font-weight: 600; color: var(--SmartThemeBodyColor, #ddd); }
+.glp-quest-obj   { font-size: 0.82em; color: var(--SmartThemeEmColor, #999); }
+.glp-quest-status { font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.04em; }
+
+.glp-quest-active    .glp-quest-status { color: #6de68a; }
+.glp-quest-completed .glp-quest-status { color: var(--SmartThemeEmColor, #888); text-decoration: line-through; }
+.glp-quest-failed    .glp-quest-status { color: #e68a6d; }
+.glp-quest-paused    .glp-quest-status { color: #e6c96d; }
+
+/* ── Reputation panel ────────────────────────────────────────────────────── */
+
+.glp-rep-row {
+    display: grid;
+    grid-template-columns: 1fr 80px auto;
+    gap: 6px; align-items: center;
+    font-size: 0.82em;
+}
+
+.glp-rep-name { font-weight: 600; color: var(--SmartThemeBodyColor, #ddd); }
+
+.glp-rep-bar-wrap {
+    height: 4px; border-radius: 2px;
+    background: rgba(255,255,255,0.08); overflow: hidden;
+}
+.glp-rep-bar {
+    height: 100%; border-radius: 2px; transition: width 0.35s;
+    background: var(--SmartThemeQuoteColor, #9b8fd6);
+}
+
+.glp-rep-tier { font-size: 0.78em; text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; }
+
+/* Tier color mappings */
+.glp-rep-hostile  { color: #e06060; }
+.glp-rep-hostile.glp-rep-bar  { background: #e06060; }
+.glp-rep-cold     { color: #6090c8; }
+.glp-rep-cold.glp-rep-bar     { background: #6090c8; }
+.glp-rep-neutral  { color: var(--SmartThemeEmColor, #999); }
+.glp-rep-neutral.glp-rep-bar  { background: #8888aa; }
+.glp-rep-friendly { color: #90c870; }
+.glp-rep-friendly.glp-rep-bar { background: #90c870; }
+.glp-rep-allied   { color: #60d0a8; }
+.glp-rep-allied.glp-rep-bar   { background: #60d0a8; }
+.glp-rep-sworn    { color: #d4b060; }
+.glp-rep-sworn.glp-rep-bar    { background: #d4b060; }
+
+/* ── World events panel ──────────────────────────────────────────────────── */
+
+.glp-event-row {
+    padding: 3px 4px; border-radius: 4px;
+    font-size: 0.82em;
+    border-left: 3px solid transparent;
+    margin-bottom: 2px;
+}
+.glp-event-ongoing  { border-left-color: #e6c96d; }
+.glp-event-resolved { border-left-color: var(--SmartThemeEmColor, #888); }
+.glp-event-averted  { border-left-color: #90c870; }
+
+.glp-event-title {
+    font-weight: 600; color: var(--SmartThemeBodyColor, #ddd);
+    margin-right: 6px;
+}
+.glp-event-loc {
+    font-size: 0.82em; color: var(--SmartThemeEmColor, #999);
+    margin-right: 6px;
+}
+.glp-event-status {
+    font-size: 0.72em; text-transform: uppercase; letter-spacing: 0.04em;
+    float: right;
+}
+.glp-event-ongoing .glp-event-status  { color: #e6c96d; }
+.glp-event-resolved .glp-event-status { color: var(--SmartThemeEmColor, #888); }
+.glp-event-averted .glp-event-status  { color: #90c870; }
+
+.glp-event-desc {
+    font-size: 0.82em; color: var(--SmartThemeEmColor, #aaa);
+    margin-top: 2px; font-style: italic;
+}
+
+/* ── Currency & companions panel ─────────────────────────────────────────── */
+
+.glp-section { margin-bottom: 6px; }
+.glp-section-title {
+    font-size: 0.7em; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--SmartThemeEmColor, #888);
+    margin-bottom: 3px;
+}
+
+.glp-currency-row {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 0.82em; padding: 1px 4px;
+}
+.glp-currency-denom { color: var(--SmartThemeEmColor, #bbb); text-transform: capitalize; }
+.glp-currency-val   { font-weight: 700; color: var(--SmartThemeQuoteColor, #9b8fd6); }
+
+.glp-rank-row {
+    display: flex; align-items: center; gap: 8px; font-size: 0.85em;
+}
+.glp-rank-label {
+    font-weight: 700; font-size: 1.1em;
+    color: var(--SmartThemeQuoteColor, #9b8fd6);
+    min-width: 28px;
+}
+.glp-rank-bar-wrap {
+    flex: 1; height: 4px; border-radius: 2px;
+    background: rgba(255,255,255,0.08); overflow: hidden;
+}
+.glp-rank-bar {
+    height: 100%; border-radius: 2px; transition: width 0.35s;
+    background: var(--SmartThemeQuoteColor, #9b8fd6);
+}
+
+.glp-companion-row {
+    display: grid;
+    grid-template-columns: 1fr auto 60px auto;
+    gap: 5px; align-items: center;
+    font-size: 0.82em;
+}
+.glp-companion-name { font-weight: 600; color: var(--SmartThemeBodyColor, #ddd); }
+.glp-loyalty-bar-wrap {
+    width: 60px; height: 4px; border-radius: 2px;
+    background: rgba(255,255,255,0.08); overflow: hidden;
+}
+.glp-loyalty-bar {
+    height: 100%; border-radius: 2px; transition: width 0.35s;
+    background: #90c870;
+}
+.glp-loyalty-val { font-size: 0.82em; color: var(--SmartThemeEmColor, #999); min-width: 24px; text-align: right; }

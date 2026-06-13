@@ -1,9 +1,9 @@
 {
     "display_name": "GM Lore Parser",
     "name": "gm-lore-parser",
-    "version": "7.0.0",
+    "version": "8.0.0",
     "author": "your-name-here",
-    "description": "Parses structured GM output blocks ([NPC_BEGIN], [PLAYER_UPDATE_BEGIN], [WORLD_TIME_BEGIN], etc.) and automatically maintains campaign lorebooks, character state, NPC progression, skill systems, domain tracking, and a live status panel.",
+    "description": "Parses structured GM output blocks and maintains campaign lorebooks, character state, NPC progression, skill systems (PP + use_tracked), domain tracking, and a live status panel. Modular build — logic in modules/ loaded at runtime.",
     "loading_order": 15,
     "requires": [],
     "optional": [],

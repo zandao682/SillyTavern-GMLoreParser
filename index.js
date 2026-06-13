@@ -2,7 +2,8 @@
  * GM Lore Parser — SillyTavern Extension  v8.0.0
  *
  * Entry point only. All logic lives in modules/. Load order matters:
- * state → utils → lorebook → schema → skills → domain → lore → sheet → commands → panel → context
+ * state → utils → lorebook → schema → skills → domain → lore → sheet
+ *   → quests → reputation → events → currency → commands → panel → context
  *
  * To add a new block type:
  *   1. Add its begin/end strings to UPDATE_BLOCKS or SHEET_BLOCKS in modules/state.js
@@ -17,17 +18,21 @@ var VERSION     = '8.0.0';
 // ── Module loader ─────────────────────────────────────────────────────────────
 
 var GLP_MODULE_LOAD_ORDER = [
-    'state',    // constants, block registries, settings/state accessors
-    'utils',    // pure utilities, parseFields, extractBlocks, parseSchema
-    'lorebook', // lorebook CRUD helpers
-    'schema',   // schema engine (applyFieldValue, regen, promotions)
-    'skills',   // skill system (PP + use_tracked)
-    'domain',   // domain sub-game
-    'lore',     // NPC, item, bestiary, generic lore handlers
-    'sheet',    // player sheet handlers + world time
-    'commands', // # command interceptor
-    'panel',    // status panel rendering
-    'context',  // context injection
+    'state',      // constants, block registries, settings/state accessors
+    'utils',      // pure utilities, parseFields, extractBlocks, parseSchema
+    'lorebook',   // lorebook CRUD helpers
+    'schema',     // schema engine (applyFieldValue, regen, promotions)
+    'skills',     // skill system (PP + use_tracked)
+    'domain',     // domain sub-game
+    'lore',       // NPC, item, bestiary, generic lore handlers
+    'sheet',      // player sheet handlers + world time
+    'quests',     // quest tracker
+    'reputation', // faction reputation
+    'events',     // world events + plot lorebook
+    'currency',   // currency, rank, companions, XP, evolution
+    'commands',   // # command interceptor
+    'panel',      // status panel rendering
+    'context',    // context injection
 ];
 
 async function glpLoadModules() {
@@ -115,6 +120,30 @@ async function onMessageReceived(messageId) {
     for (const b of extractBlocks(text, SHEET_BLOCKS.DOMAIN_UPDATE.begin, SHEET_BLOCKS.DOMAIN_UPDATE.end))
         { applyDomainUpdate(b.raw); sheetChanged = true; }
 
+    for (const b of extractBlocks(text, SHEET_BLOCKS.REPUTATION_UPDATE.begin, SHEET_BLOCKS.REPUTATION_UPDATE.end))
+        { if (await applyReputationUpdate(b.raw, settings)) sheetChanged = true; }
+
+    for (const b of extractBlocks(text, SHEET_BLOCKS.WORLD_EVENT.begin, SHEET_BLOCKS.WORLD_EVENT.end))
+        { if (await applyWorldEventBlock(b.raw, settings)) sheetChanged = true; }
+
+    for (const b of extractBlocks(text, SHEET_BLOCKS.PLOT_ENTRY.begin, SHEET_BLOCKS.PLOT_ENTRY.end))
+        { await processPlotEntry(b.raw, settings); }
+
+    for (const b of extractBlocks(text, SHEET_BLOCKS.CURRENCY_UPDATE.begin, SHEET_BLOCKS.CURRENCY_UPDATE.end))
+        { if (applyCurrencyUpdate(b.raw)) sheetChanged = true; }
+
+    for (const b of extractBlocks(text, SHEET_BLOCKS.RANK_CHANGE.begin, SHEET_BLOCKS.RANK_CHANGE.end))
+        { if (applyRankChange(b.raw)) sheetChanged = true; }
+
+    for (const b of extractBlocks(text, SHEET_BLOCKS.XP_AWARD.begin, SHEET_BLOCKS.XP_AWARD.end))
+        { if (applyXpAward(b.raw)) sheetChanged = true; }
+
+    for (const b of extractBlocks(text, SHEET_BLOCKS.COMPANION_UPDATE.begin, SHEET_BLOCKS.COMPANION_UPDATE.end))
+        { if (await applyCompanionUpdate(b.raw, settings)) sheetChanged = true; }
+
+    for (const b of extractBlocks(text, SHEET_BLOCKS.EVOLUTION.begin, SHEET_BLOCKS.EVOLUTION.end))
+        { if (await applyEvolution(b.raw, settings)) sheetChanged = true; }
+
     for (const b of extractBlocks(text, SHEET_BLOCKS.WORLD_TIME.begin, SHEET_BLOCKS.WORLD_TIME.end)) {
         const r = await applyWorldTime(b.raw, settings);
         if (r.playerRegenChanged || r.playerPromotions.length) sheetChanged = true;
@@ -133,8 +162,10 @@ async function onMessageReceived(messageId) {
                 const fields = parseFields(b.raw); fields._raw = b.raw;
                 let ok = false;
                 if (type === 'NPC')      ok = await processNpcBlock(fields, settings);
-                else if (type === 'ITEM') ok = await processItemBlock(fields, settings);
+                else if (type === 'ITEM')     ok = await processItemBlock(fields, settings);
                 else if (type === 'BESTIARY') ok = await processBestiaryBlock(fields, settings);
+                else if (type === 'QUEST')    ok = await processQuestBlock(fields, settings);
+                else if (type === 'FACTION')  ok = await processFactionBlock(fields, settings);
                 else ok = await processGenericLore(type, cfg, fields, settings);
                 if (ok) loreSaved++;
             }
@@ -160,6 +191,15 @@ async function onMessageReceived(messageId) {
 
         for (const b of extractBlocks(text, UPDATE_BLOCKS.ITEM_UPDATE.begin, UPDATE_BLOCKS.ITEM_UPDATE.end))
             if (await processItemUpdate(b.raw, settings)) loreSaved++;
+
+        for (const b of extractBlocks(text, UPDATE_BLOCKS.QUEST_UPDATE.begin, UPDATE_BLOCKS.QUEST_UPDATE.end))
+            if (await applyQuestUpdate(b.raw, settings)) loreSaved++;
+
+        for (const b of extractBlocks(text, UPDATE_BLOCKS.FACTION_UPDATE.begin, UPDATE_BLOCKS.FACTION_UPDATE.end))
+            if (await processFactionUpdate(b.raw, settings)) loreSaved++;
+
+        for (const b of extractBlocks(text, UPDATE_BLOCKS.WORLD_EVENT_UPDATE.begin, UPDATE_BLOCKS.WORLD_EVENT_UPDATE.end))
+            if (await applyWorldEventUpdate(b.raw, settings)) loreSaved++;
     }
 
     // ── Post-processing ───────────────────────────────────────────────────────
@@ -241,9 +281,18 @@ async function renderSettingsPanel() {
       <label class="glp-row"><input type="checkbox" id="glp-scan-user" ${settings.scanUserMessages ? 'checked' : ''}><span>Scan user messages for lore blocks</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-intercept" ${settings.interceptCommands? 'checked' : ''}><span>Intercept # commands</span></label>
       <div class="glp-section-label">Panels</div>
-      <label class="glp-row"><input type="checkbox" id="glp-show-panel"   ${settings.showStatusPanel ? 'checked' : ''}><span>Character status panel</span></label>
-      <label class="glp-row"><input type="checkbox" id="glp-show-skills"  ${settings.showSkillPanel  ? 'checked' : ''}><span>Skill panel</span></label>
-      <label class="glp-row"><input type="checkbox" id="glp-show-domain"  ${settings.showDomainPanel ? 'checked' : ''}><span>Domain panel</span></label>
+      <label class="glp-row"><input type="checkbox" id="glp-show-panel"    ${settings.showStatusPanel  ? 'checked' : ''}><span>Character status panel</span></label>
+      <label class="glp-row"><input type="checkbox" id="glp-show-skills"   ${settings.showSkillPanel   ? 'checked' : ''}><span>Skill panel</span></label>
+      <label class="glp-row"><input type="checkbox" id="glp-show-domain"   ${settings.showDomainPanel  ? 'checked' : ''}><span>Domain panel</span></label>
+      <label class="glp-row"><input type="checkbox" id="glp-show-quests"   ${settings.showQuestPanel   ? 'checked' : ''}><span>Quest panel</span></label>
+      <label class="glp-row"><input type="checkbox" id="glp-show-rep"      ${settings.showRepPanel     ? 'checked' : ''}><span>Reputation panel</span></label>
+      <label class="glp-row"><input type="checkbox" id="glp-show-events"   ${settings.showEventsPanel  ? 'checked' : ''}><span>World events panel</span></label>
+      <label class="glp-row"><input type="checkbox" id="glp-show-currency" ${settings.showCurrencyPanel? 'checked' : ''}><span>Currency &amp; companions panel</span></label>
+      <div class="glp-field-setting">
+        <label for="glp-plot-lorebook">Plot Lorebook (optional)</label>
+        <select id="glp-plot-lorebook" class="text_pole"><option value="">— auto (campaign-plot) —</option>${opts}</select>
+        <small>Plot entries go here. Auto-created if blank.</small>
+      </div>
       <label class="glp-row"><input type="checkbox" id="glp-inject-ctx"   ${settings.injectIntoContext?'checked' : ''}><span>Inject state into context</span></label>
       <div class="glp-field-setting">
         <label for="glp-ctx-depth">Context injection depth</label>
@@ -256,8 +305,8 @@ async function renderSettingsPanel() {
         <div class="glp-field-setting"><label>Rule order</label><input  type="number" id="glp-rule-order"  class="text_pole" min="1" max="999" value="${settings.ruleOrder}"></div>
       </div>
       <div class="glp-info">
-        <b>v8 — modular build.</b> Modules: state · utils · lorebook · schema · skills · domain · lore · sheet · commands · panel · context<br>
-        <b>Skill modes:</b> pp (multi-tier Veridia-style) · use_tracked (simple threshold)<br>
+        <b>v8 — modular build.</b> Modules: state · utils · lorebook · schema · skills · domain · lore · sheet · quests · reputation · events · currency · commands · panel · context<br>
+        <b>Skill modes:</b> pp (multi-tier, configurable) · use_tracked (threshold counter)<br>
         <b>Add a block type:</b> edit modules/state.js (registry) + add handler in the appropriate module
       </div>
     </div>
@@ -274,8 +323,13 @@ async function renderSettingsPanel() {
     $('#glp-intercept').on('change', function()  { getSettings().interceptCommands= this.checked; save(); });
     $('#glp-show-panel').on('change', function() { getSettings().showStatusPanel  = this.checked; refreshStatusPanel(); save(); });
     $('#glp-show-skills').on('change', function(){ getSettings().showSkillPanel   = this.checked; refreshStatusPanel(); save(); });
-    $('#glp-show-domain').on('change', function(){ getSettings().showDomainPanel  = this.checked; refreshStatusPanel(); save(); });
-    $('#glp-inject-ctx').on('change', function() { getSettings().injectIntoContext= this.checked; injectCharacterContext(); save(); });
+    $('#glp-show-domain').on('change', function()   { getSettings().showDomainPanel   = this.checked; refreshStatusPanel(); save(); });
+    $('#glp-show-quests').on('change', function()   { getSettings().showQuestPanel    = this.checked; refreshStatusPanel(); save(); });
+    $('#glp-show-rep').on('change', function()      { getSettings().showRepPanel      = this.checked; refreshStatusPanel(); save(); });
+    $('#glp-show-events').on('change', function()   { getSettings().showEventsPanel   = this.checked; refreshStatusPanel(); save(); });
+    $('#glp-show-currency').on('change', function() { getSettings().showCurrencyPanel = this.checked; refreshStatusPanel(); save(); });
+    $('#glp-plot-lorebook').on('change', function() { getSettings().plotLorebook      = this.value;   save(); });
+    $('#glp-inject-ctx').on('change', function()    { getSettings().injectIntoContext = this.checked; injectCharacterContext(); save(); });
     $('#glp-ctx-depth').on('change', function()  { getSettings().contextDepth     = parseInt(this.value) || 1; injectCharacterContext(); save(); });
     $('#glp-scan-depth').on('change', function() { getSettings().defaultScanDepth = parseInt(this.value) || 4; save(); });
     $('#glp-lore-order').on('change', function() { getSettings().loreOrder        = parseInt(this.value) || 100; save(); });

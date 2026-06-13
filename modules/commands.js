@@ -8,15 +8,24 @@
  */
 
 var KNOWN_COMMANDS = {
-    '#status':    cmdStatus,
-    '#character': cmdStatus,
-    '#vitals':    cmdVitals,
-    '#skills':    cmdSkills,
-    '#inventory': cmdInventory,
-    '#bag':       cmdInventory,
-    '#domain':    cmdDomain,
-    '#time':      cmdTime,
-    '#help':      cmdHelp,
+    '#status':     cmdStatus,
+    '#character':  cmdStatus,
+    '#vitals':     cmdVitals,
+    '#skills':     cmdSkills,
+    '#inventory':  cmdInventory,
+    '#bag':        cmdInventory,
+    '#domain':     cmdDomain,
+    '#time':       cmdTime,
+    '#quests':     cmdQuests,
+    '#rep':        cmdReputation,
+    '#reputation': cmdReputation,
+    '#factions':   cmdFactions,
+    '#events':     cmdEvents,
+    '#currency':   cmdCurrency,
+    '#gold':       cmdCurrency,
+    '#rank':       cmdRank,
+    '#companions': cmdCompanions,
+    '#help':       cmdHelp,
 };
 
 // ── Command handlers ──────────────────────────────────────────────────────────
@@ -115,13 +124,20 @@ function cmdTime(state) {
 function cmdHelp() {
     return [
         '[Commands]',
-        '#status / #character — Full character sheet',
-        '#vitals              — HP/MP/resources with regen rates',
-        '#skills              — Skill list with tiers and PP',
-        '#inventory / #bag   — Inventory list',
-        '#domain             — Domain statistics',
-        '#time               — Current in-world time',
-        '#help               — This list',
+        '#status / #character  — Full character sheet',
+        '#vitals               — HP/MP/resources with regen rates',
+        '#skills               — Skill list with tiers and PP',
+        '#inventory / #bag    — Inventory list',
+        '#domain              — Domain statistics',
+        '#time                — Current in-world time',
+        '#quests              — Quest tracker',
+        '#rep / #reputation   — Faction reputation standings',
+        '#factions            — Full faction roster with lore',
+        '#events              — World events log',
+        '#currency / #gold    — Wallet and denominations',
+        '#rank                — Guild / adventurer rank',
+        '#companions          — Companion roster',
+        '#help                — This list',
     ].join('\n');
 }
 
