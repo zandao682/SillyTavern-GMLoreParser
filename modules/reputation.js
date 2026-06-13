@@ -76,7 +76,7 @@ async function rebuildFactionLoreEntry(slug, settings) {
         ? normalizeKeys(lore.keywords)
         : normalizeKeys([...expandNameKeys(name), slug]);
 
-    const lines = [`[Faction] ${name}`];
+    const lines = [];
     if (lore) {
         if (lore.type)              lines.push(`Type: ${lore.type}`);
         if (lore.goals)             lines.push(`Goals: ${lore.goals}`);

@@ -92,6 +92,7 @@ var DEFAULT_SETTINGS = Object.freeze({
     showBoonPanel: true, showNeedsPanel: true,
     interceptCommands: true, plotLorebook: '',
     injectResolution: true,
+    pinPanel: false,          // keep the GM State drawer locked open
 });
 
 var DEFAULT_CHAR_STATE = Object.freeze({

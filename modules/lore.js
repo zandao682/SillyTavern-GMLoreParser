@@ -18,12 +18,13 @@ async function processNpcBlock(fields, settings) {
     const schema = fields._inherited_schema || parseSchema(fields._raw || '');
     const hasSchema = Object.keys(schema.fields).length > 0;
 
-    // Core entry (immutable characteristics)
-    const coreLines  = [`[NPC] ${name}`];
-    const skipInCore = new Set([...LORE_META, ...dynamicFields, 'schema', '_raw', 'type', 'from_template']);
+    // Core entry (immutable characteristics). The comment titles the entry, so the
+    // content carries only the data (no redundant header line); internal keys skipped.
+    const coreLines  = [];
+    const skipInCore = new Set([...LORE_META, ...dynamicFields, 'schema', 'type', 'from_template']);
     const schemaKeys = new Set(Object.keys(schema.fields));
     for (const [k, v] of Object.entries(fields))
-        if (!skipInCore.has(k) && !schemaKeys.has(k)) coreLines.push(`${k.replace(/_/g, ' ')}: ${v}`);
+        if (!skipInCore.has(k) && !schemaKeys.has(k) && !k.startsWith('_')) coreLines.push(`${k.replace(/_/g, ' ')}: ${v}`);
     coreLines.push(`[Core — immutable. See [NPC:State]${hasSchema ? ' and [NPC:Progression]' : ''} for dynamic data.]`);
 
     await upsertEntry(settings.campaignLorebook, {
@@ -47,7 +48,7 @@ async function processNpcBlock(fields, settings) {
 }
 
 async function rebuildNpcStateEntry(name, dynamicFields, currentValues, schema, keys, settings) {
-    const lines = [`[NPC:State] ${name}`];
+    const lines = [];
     const schemaGmMutable = Object.entries(schema?.fields || {})
         .filter(([, d]) => getMutability(d) === MUTABILITY.GM_MUTABLE);
     for (const f of dynamicFields)
@@ -66,7 +67,7 @@ async function rebuildNpcStateEntry(name, dynamicFields, currentValues, schema, 
 }
 
 async function rebuildNpcProgressionEntry(name, schema, values, keys, settings) {
-    const content = buildValueSummary(`[NPC:Progression] ${name}`, schema, values);
+    const content = buildValueSummary('', schema, values);
     await upsertEntry(settings.campaignLorebook, {
         ...entryBase(`[NPC:Progression] ${name}`, keys, content, settings.loreOrder + 2, settings, { type: 'NPC_PROGRESSION' }),
     });
@@ -102,7 +103,7 @@ async function writeSubjectMemory(subjectName, prefix, memType, title, content, 
     const entry = {
         comment:    `[Memory] ${subjectName} — ${title || content.slice(0, 40)}`,
         key:        keywords, keysecondary: [],
-        content:    `[${subjectName} — ${isCore ? 'Core Memory' : 'Memory'}]\n${content}`,
+        content:    content,
         constant:   isCore, selective: false, selectiveLogic: 0,
         order:      isCore ? 1 : 50, depth: settings.defaultScanDepth,
         disable:    false, addMemo: true,
@@ -153,12 +154,12 @@ async function processItemBlock(fields, settings) {
         ? fields.mutable_fields.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
         : [];
     const keys  = fields.keywords ? normalizeKeys(fields.keywords.split(',')) : expandNameKeys(name);
-    const lines = [`[Item] ${name}`];
+    const lines = [];
     if (fields.durability && fields.durability_max) {
         const c = itemConditionLabel(parseFloat(fields.durability), parseFloat(fields.durability_max));
         if (c) lines.push(`condition: ${c}`);
     }
-    for (const [k, v] of Object.entries(fields)) if (!LORE_META.has(k)) lines.push(`${k.replace(/_/g, ' ')}: ${v}`);
+    for (const [k, v] of Object.entries(fields)) if (!LORE_META.has(k) && !k.startsWith('_')) lines.push(`${k.replace(/_/g, ' ')}: ${v}`);
     if (mutableFields.length) lines.push(`[Mutable: ${mutableFields.join(', ')}]`);
     return upsertEntry(settings.campaignLorebook, {
         ...entryBase(`[Item] ${name}`, keys, lines.join('\n'), settings.loreOrder, settings, { type: 'ITEM', mutable_fields: mutableFields }),
@@ -219,7 +220,7 @@ async function processLocationBlock(fields, settings) {
     const name  = fields.name;
     const keys  = fields.keywords ? normalizeKeys(fields.keywords.split(',')) : expandNameKeys(name);
 
-    const lines = [`[Location] ${name}`];
+    const lines = [];
     if (fields.type)        lines.push(`Type: ${fields.type}`);
     if (fields.region)      lines.push(`Region: ${fields.region}`);
     if (fields.description) lines.push(`Description: ${fields.description}`);
@@ -230,7 +231,7 @@ async function processLocationBlock(fields, settings) {
         if (fields.instance_type) lines.push(`Instance type: ${fields.instance_type}`);
     }
     for (const [k, v] of Object.entries(fields))
-        if (!LORE_META.has(k) && !['type', 'region', 'description', 'instance', 'instance_type'].includes(k))
+        if (!LORE_META.has(k) && !k.startsWith('_') && !['type', 'region', 'description', 'instance', 'instance_type'].includes(k))
             lines.push(`${k.replace(/_/g, ' ')}: ${v}`);
 
     await upsertEntry(settings.campaignLorebook, {
@@ -280,8 +281,8 @@ async function processGenericLore(type, cfg, fields, settings) {
     const keys  = fields[keyFd]
         ? normalizeKeys(fields[keyFd].split(','))
         : expandNameKeys(name);
-    const lines = [`[${cfg.label}] ${name}`];
-    for (const [k, v] of Object.entries(fields)) if (!LORE_META.has(k)) lines.push(`${k.replace(/_/g, ' ')}: ${v}`);
+    const lines = [];
+    for (const [k, v] of Object.entries(fields)) if (!LORE_META.has(k) && !k.startsWith('_')) lines.push(`${k.replace(/_/g, ' ')}: ${v}`);
     return upsertEntry(settings.campaignLorebook, {
         ...entryBase(`[${cfg.label}] ${name}`, keys, lines.join('\n'),
             type === 'RULE' ? settings.ruleOrder : settings.loreOrder, settings, { type: cfg.label }),

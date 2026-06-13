@@ -82,9 +82,11 @@ function applyRegen(schemaFields, values, elapsedMinutes, isResting) {
     return changed;
 }
 
-/** Build a plain-text summary of schema values (for context injection). */
+/** Build a plain-text summary of schema values (for context injection).
+ *  Pass a falsy `header` to omit the leading title line (e.g. lorebook entries
+ *  whose `comment` already titles them). */
 function buildValueSummary(header, schema, values) {
-    const lines = [header];
+    const lines = header ? [header] : [];
     const sf    = schema.fields || {};
     const grouped = {};
     for (const [key, desc] of Object.entries(sf)) {

@@ -11,6 +11,12 @@ function renderField(key, descriptor, values) {
     const label  = descriptor.label || key;
     const color  = descriptor.color || 'var(--SmartThemeQuoteColor, #9b8fd6)';
     const mut    = getMutability(descriptor);
+    // Hover tooltip = the field/attribute description (schema `description:` or the
+    // System Definition attribute's description), NOT the progression mode.
+    const _desc  = descriptor.description
+        || (typeof getSystemDef === 'function' ? (getSystemDef().attributes || []).find(a => a.key === key)?.description : '')
+        || '';
+    const titleAttr = _desc ? ` title="${String(_desc).replace(/"/g, '&quot;')}"` : '';
     const usesKey = `${key}_uses`;
     const usesVal = parseInt(values[usesKey]) || 0;
     const usesThr = descriptor.uses_threshold || 0;
@@ -31,7 +37,7 @@ function renderField(key, descriptor, values) {
             const d   = pct <= _pcfg.bar_danger_pct ? 'glp-danger' : pct <= _pcfg.bar_warn_pct ? 'glp-warning' : '';
             return `<div class="glp-field-bar ${d}">
                 <div class="glp-field-bar-header">
-                    <span class="glp-field-label">${label}${evBadge}</span>
+                    <span class="glp-field-label"${titleAttr}>${label}${evBadge}</span>
                     <span class="glp-field-bar-val" style="color:${color}">${cur}${max !== cur ? `/${max}` : ''} ${regenDisplay}</span>
                 </div>
                 <div class="glp-bar-track"><div class="glp-bar-fill" style="width:${pct}%;background:${color}"></div></div>
@@ -44,7 +50,7 @@ function renderField(key, descriptor, values) {
                 `<span class="glp-pip ${i < cur ? 'glp-pip-full' : 'glp-pip-empty'}" style="${i < cur ? `background:${color}` : ''}"></span>`
             ).join('');
             return `<div class="glp-field-pool">
-                <span class="glp-field-label">${label}${evBadge}</span>
+                <span class="glp-field-label"${titleAttr}>${label}${evBadge}</span>
                 <span class="glp-pool-pips">${pips}</span>
                 <span class="glp-pool-count" style="color:${color}">${cur}/${max}${regenDisplay}</span>
             </div>`;
@@ -55,15 +61,15 @@ function renderField(key, descriptor, values) {
             const inner = key === 'conditions'
                 ? items.map(c => `<span class="glp-condition-pill">${c}</span>`).join('')
                 : `<span class="glp-list-items">${items.join(' · ')}</span>`;
-            return `<div class="glp-field-list"><span class="glp-field-label">${label}</span><div class="glp-list-content">${inner}</div></div>`;
+            return `<div class="glp-field-list"><span class="glp-field-label"${titleAttr}>${label}</span><div class="glp-list-content">${inner}</div></div>`;
         }
         case 'text':
             if (val === undefined || val === null || val === '') return '';
-            return `<div class="glp-field-text"><span class="glp-field-label">${label}</span><span class="glp-field-text-val">${val}</span></div>`;
+            return `<div class="glp-field-text"><span class="glp-field-label"${titleAttr}>${label}</span><span class="glp-field-text-val">${val}</span></div>`;
         default:
             if (val === undefined || val === null || val === '') return '';
             return `<div class="glp-field-value">
-                <span class="glp-field-label">${label}${evBadge}</span>
+                <span class="glp-field-label"${titleAttr}>${label}${evBadge}</span>
                 <span class="glp-field-value-val" style="color:${color}">${val}</span>
                 ${usesInd}
             </div>`;
@@ -103,6 +109,7 @@ function buildStatusPanelHTML(state) {
     const grouped = {};
     for (const [key, desc] of Object.entries(schema)) {
         if (isMaxFieldOf(key, schema) || isUsesCounterOf(key, schema)) continue;
+        if (key === 'inventory') continue;   // carried inventory gets its own collapsible section
         const g = desc.group || 'other';
         if (!grouped[g]) grouped[g] = [];
         grouped[g].push([key, desc]);
@@ -170,8 +177,9 @@ function buildStatusPanelHTML(state) {
 }
 
 function refreshStatusPanel() {
-    if (!getSettings().showStatusPanel) { $('#glp-status-panel').remove(); return; }
-    const html = buildStatusPanelHTML(getCharState());
-    if ($('#glp-status-panel').length) $('#glp-status-panel').replaceWith(html);
-    else $('#send_form').before(html);
+    // The panel lives inside the GM State top-bar drawer (#glp-drawer-body),
+    // mounted by index.js mountGlpDrawer() at APP_READY.
+    const body = document.getElementById('glp-drawer-body');
+    if (!body) return;                                   // drawer not mounted yet
+    body.innerHTML = getSettings().showStatusPanel ? buildStatusPanelHTML(getCharState()) : '';
 }

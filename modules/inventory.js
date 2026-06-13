@@ -119,6 +119,16 @@ function buildInventoryPanel(state) {
     const eq  = equipmentCfg();
     const sections = [];
 
+    // Carried inventory — clickable items open their [Item] lorebook entry.
+    const inv = state.values?.inventory;
+    const items = Array.isArray(inv) ? inv : (inv ? String(inv).split(/[;,]/).map(s => s.trim()).filter(Boolean) : []);
+    if (items.length) {
+        const rows = items.map(it =>
+            `<span class="glp-inv-item" data-item="${String(it).replace(/"/g, '&quot;')}" title="Click for item details">${it}</span>`
+        ).join('');
+        sections.push(`<div class="glp-section"><div class="glp-section-title">Carried (${items.length})</div><div class="glp-inv-items">${rows}</div></div>`);
+    }
+
     if (eq.enabled && eq.slots.length) {
         const rows = eq.slots.map(s => {
             const item = state.equipment?.[s.key];
@@ -138,6 +148,26 @@ function buildInventoryPanel(state) {
         sections.push(`<div class="glp-section"><div class="glp-section-title">Item Box</div>${rows}</div>`);
     }
     return sections.join('');
+}
+
+/** Open an inventory item's [Item] lorebook entry in a popup (header-free content). */
+async function glpShowItemPopup(itemName) {
+    const ctx = SillyTavern.getContext();
+    const lb  = getSettings().campaignLorebook;
+    let content = '';
+    if (lb) {
+        try {
+            const data  = await ctx.loadWorldInfo(lb);
+            const entry = data && Object.values(data.entries || {}).find(e => e.comment === `[Item] ${itemName}`);
+            content = entry?.content || '';
+        } catch (e) { /* ignore */ }
+    }
+    const esc  = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const body = content ? esc(content) : 'No lore entry recorded for this item yet.';
+    const html = `<div class="glp-item-popup"><h3>${esc(itemName)}</h3><pre class="glp-item-popup-body">${body}</pre></div>`;
+    if (typeof ctx.callGenericPopup === 'function' && ctx.POPUP_TYPE) ctx.callGenericPopup(html, ctx.POPUP_TYPE.TEXT);
+    else if (typeof ctx.callPopup === 'function') ctx.callPopup(html, 'text');
+    else toastr?.info?.(content || itemName);
 }
 
 // ── Commands ───────────────────────────────────────────────────────────────────

@@ -181,6 +181,7 @@ function parseSchema(raw) {
         const fd = schema.fields[cf];
         switch (key) {
             case 'label':           fd.label          = val; break;
+            case 'description':     fd.description     = val; break;
             case 'type':            fd.type           = val; break;
             case 'group':           fd.group          = val; break;
             case 'max_field':       fd.max_field      = val; break;

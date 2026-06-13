@@ -160,7 +160,7 @@ function _applyCapabilityStatChanges(raw, srcName) {
 }
 
 function _capabilityEntryContent(cap) {
-    const lines = [`[${cap.category[0].toUpperCase() + cap.category.slice(1)}] ${cap.name}`];
+    const lines = [`Category: ${cap.category}`];
     if (cap.activation && cap.activation !== 'always') lines.push(`Activation: ${cap.activation}`);
     if (cap.description) lines.push(`Description: ${cap.description}`);
     if (cap.effects)     lines.push(`Effects: ${cap.effects}`);

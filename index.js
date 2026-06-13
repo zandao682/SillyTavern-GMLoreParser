@@ -340,7 +340,10 @@ async function renderSettingsPanel() {
   <div class="inline-drawer">
     <div class="inline-drawer-toggle inline-drawer-header">
       <b>GM Lore Parser</b>
-      <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+      <div class="flex-container alignItemsCenter" style="gap:8px;margin-inline-start:auto;">
+        <div id="glp-settings-popout" class="fa-solid fa-window-restore interactable" title="Pop out settings" tabindex="0"></div>
+        <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+      </div>
     </div>
     <div class="inline-drawer-content">
       <label class="glp-row"><input type="checkbox" id="glp-enabled" ${settings.enabled ? 'checked' : ''}><span>Enable GM Lore Parser</span></label>
@@ -381,9 +384,10 @@ async function renderSettingsPanel() {
         <div class="glp-field-setting"><label>Rule order</label><input  type="number" id="glp-rule-order"  class="text_pole" min="1" max="999" value="${settings.ruleOrder}"></div>
       </div>
       <div class="glp-info">
-        <b>v0.0.10 (beta) — modular build.</b> Modules: state · utils · lorebook · system · schema · entity · progression · inventory · capabilities · domain · lore · sheet · creation · quests · reputation · events · currency · needs · commands · panel · context<br>
-        <b>Skill modes:</b> pp (multi-tier, configurable) · use_tracked (threshold counter)<br>
-        <b>Add a block type:</b> edit modules/state.js (registry) + add handler in the appropriate module
+        <b>v0.0.10 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
+        <b>Capability progression</b> is configurable per category via named profiles: none · counter · use_tracked · points_tiers · xp_levels · milestone (Veridia PP/tier = the built-in <i>veridia_pp</i>).<br>
+        <b>Detailed mechanics</b> surface on demand as keyword-triggered <b>[System Rule]</b> lorebook entries (keys derived from the def's own vocabulary); <b># commands</b> are derived from the def and reshapeable via its <code>commands:</code> section.<br>
+        <b>Add a block type:</b> register tags in modules/state.js + add a handler in the relevant module + dispatch in index.js.
       </div>
     </div>
   </div>
@@ -413,6 +417,94 @@ async function renderSettingsPanel() {
     $('#glp-scan-depth').on('change', function() { getSettings().defaultScanDepth = parseInt(this.value) || 4; save(); });
     $('#glp-lore-order').on('change', function() { getSettings().loreOrder        = parseInt(this.value) || 100; save(); });
     $('#glp-rule-order').on('change', function() { getSettings().ruleOrder        = parseInt(this.value) || 50;  save(); });
+    $('#glp-settings-popout').off('click').on('click', glpSettingsTogglePopout);
+}
+
+// ── Settings pop-out (detach the settings into a draggable floating panel) ─────
+// Mirrors ST's Summarize extension. We MOVE the live .inline-drawer-content (so
+// its change handlers travel with it) into a float, and move it back on close.
+
+async function glpSettingsTogglePopout(e) {
+    e?.stopPropagation?.();
+    if (document.getElementById('glp-settings-popout-panel')) { $('#glpSettingsPopoutClose').trigger('click'); return; }
+
+    const $content = $('.glp-settings .inline-drawer-content');
+    if (!$content.length) return;
+    const $origParent = $content.parent();
+
+    const tpl = $('#zoomed_avatar_template').html();
+    const $panel = tpl ? $(tpl) : $('<div></div>');
+    $panel.attr('id', 'glp-settings-popout-panel')
+        .removeClass('zoomed_avatar').addClass('draggable')
+        .css('display', 'flex').empty();
+    const controlBar = `<div class="panelControlBar flex-container">
+        <div id="glpSettingsPopoutHeader" class="fa-solid fa-grip drag-grabber hoverglow"></div>
+        <div id="glpSettingsPopoutClose" class="fa-solid fa-circle-xmark hoverglow dragClose" title="Close"></div>
+    </div>`;
+    $panel.append(controlBar).append($content);            // moves the live element
+    $('#movingDivs').append($panel);
+
+    try {
+        const ra = await import('../../../RossAscends-mods.js');
+        const pu = await import('../../../power-user.js');
+        pu.loadMovingUIState?.();
+        ra.dragElement?.($panel);
+    } catch (err) { console.warn(`[${MODULE_NAME}] popout drag unavailable:`, err); }
+
+    $('#glpSettingsPopoutClose').off('click').on('click', function () {
+        $origParent.append($content);                      // move the live element back
+        $('#glp-settings-popout-panel').remove();
+    });
+}
+
+// ── GM State drawer (top-bar, pinnable; hosts the status panel) ────────────────
+// Modeled on ST's AI Response Configuration drawer. ST binds `.drawer-toggle`
+// once at init, so our late-injected toggle wires its own open/close. The pin
+// uses ST's own `pinnedOpen` class, which exempts the drawer from ST's
+// outside-click auto-close (see script.js html mousedown handler).
+
+function mountGlpDrawer() {
+    if (document.getElementById('glp-drawer-button')) return;       // mount once
+    if (!document.getElementById('top-settings-holder')) return;
+    const html = `
+<div id="glp-drawer-button" class="drawer">
+  <div class="drawer-toggle drawer-header">
+    <div id="glpDrawerIcon" class="drawer-icon fa-solid fa-scroll fa-fw closedIcon interactable" title="GM State"></div>
+  </div>
+  <div id="glp-drawer" class="drawer-content fillLeft closedDrawer">
+    <div id="glp-drawer-pin-div" title="Lock — the GM State panel stays open">
+      <input type="checkbox" id="glp-drawer-pin">
+      <label for="glp-drawer-pin">
+        <div class="unchecked fa-solid fa-unlock"></div>
+        <div class="checked fa-solid fa-lock"></div>
+      </label>
+    </div>
+    <div id="glp-drawer-body"></div>
+  </div>
+</div>`;
+    $('#top-settings-holder').append(html);
+
+    const $icon = $('#glpDrawerIcon'), $drawer = $('#glp-drawer');
+    const applyPin = (pinned) => {
+        $drawer.toggleClass('pinnedOpen', pinned);
+        $icon.toggleClass('drawerPinnedOpen', pinned);
+        if (pinned) { $drawer.addClass('openDrawer').removeClass('closedDrawer'); $icon.addClass('openIcon').removeClass('closedIcon'); }
+    };
+    $('#glp-drawer-button > .drawer-toggle').on('click', function () {
+        $drawer.toggleClass('openDrawer closedDrawer');
+        $icon.toggleClass('openIcon closedIcon');
+    });
+    $('#glp-drawer-pin').prop('checked', !!getSettings().pinPanel).on('change', function () {
+        getSettings().pinPanel = this.checked;
+        SillyTavern.getContext().saveSettingsDebounced();
+        applyPin(this.checked);
+    });
+    if (getSettings().pinPanel) applyPin(true);
+
+    // Inventory item → popup its [Item] lorebook entry (delegated; survives re-renders).
+    $(document).off('click.glpInvItem').on('click.glpInvItem', '.glp-inv-item', function () {
+        if (typeof glpShowItemPopup === 'function') glpShowItemPopup($(this).attr('data-item'));
+    });
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -429,6 +521,7 @@ jQuery(async () => {
     eventSource.on(event_types.CHAT_CHANGED,          onChatChanged);
     eventSource.on(event_types.APP_READY, async () => {
         await renderSettingsPanel();
+        mountGlpDrawer();
         refreshStatusPanel();
         injectCharacterContext();
     });

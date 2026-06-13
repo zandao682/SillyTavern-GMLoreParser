@@ -408,11 +408,11 @@ async function creatureEntityBegin(fields, settings) {
     const schema = Object.keys(parseSchema(fields._raw || '').fields).length
         ? parseSchema(fields._raw || '') : { fields: {}, groups: [] };
 
-    const coreLines = [`[Creature] ${name}`], scaling = {}, templateValues = {};
-    const skip = new Set([...LORE_META, 'schema', '_raw', 'type', 'from_template']);
+    const coreLines = [], scaling = {}, templateValues = {};
+    const skip = new Set([...LORE_META, 'schema', 'type', 'from_template']);
     const schemaKeys = new Set(Object.keys(schema.fields));
     for (const [k, v] of Object.entries(fields)) {
-        if (skip.has(k)) continue;
+        if (skip.has(k) || k.startsWith('_')) continue;
         if (k.endsWith('_per_level')) {
             const base = k.replace(/_per_level$/, '');
             scaling[base] = v;
@@ -540,7 +540,7 @@ async function applyCompanionUpdate(raw, settings) {
 
 function buildCompanionContent(comp) {
     const cfg   = companionCfg();
-    const lines = [`[Companion] ${comp.name}`];
+    const lines = [];
     if (comp.type)         lines.push(`Type: ${comp.type}`);
     lines.push(`Status: ${comp.status}`);
     lines.push(`Loyalty: ${comp.loyalty}/${loyaltyScaleMax()}`);

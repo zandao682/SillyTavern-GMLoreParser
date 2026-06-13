@@ -32,7 +32,7 @@ function parseObjectives(raw) {
 
 /** Build a plain-text quest entry for the lorebook. */
 function buildQuestLoreContent(quest) {
-    const lines = [`[Quest] ${quest.title}`];
+    const lines = [];
     if (quest.rank)     lines.push(`Rank: ${quest.rank}`);
     if (quest.category) lines.push(`Category: ${quest.category}`);
     lines.push(`Status: ${quest.status}`);

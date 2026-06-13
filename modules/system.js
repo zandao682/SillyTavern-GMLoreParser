@@ -331,12 +331,12 @@ function parseSystemDef(raw) {
         parsed.classes = { enabled: _bool(kv.enabled, options.length > 0), options };
     }
 
-    // attributes: rows `key | label | abbr`
+    // attributes: rows `key | label | abbr | description`
     if (sec.attributes) {
         const attrs = [];
         for (const l of sec.attributes.lines) {
-            const [key, label, abbr] = l.split('|').map(s => s.trim());
-            if (key) attrs.push({ key: key.toLowerCase(), label: label || key, abbr: abbr || '' });
+            const [key, label, abbr, description] = l.split('|').map(s => s.trim());
+            if (key) attrs.push({ key: key.toLowerCase(), label: label || key, abbr: abbr || '', description: description || '' });
         }
         if (attrs.length) parsed.attributes = attrs;
     }
@@ -684,7 +684,7 @@ function _ruleDescriptors(def) {
             ..._phraseTokens(r.mechanic).filter(w => /^(d\d+|dc|\d+d\d+)$/.test(w) || w.length >= 4),
             'check', 'contest', 'roll', 'difficulty',
         ]);
-        const lines = [`[Resolution]`, `Mechanic: ${r.mechanic}`];
+        const lines = [`Mechanic: ${r.mechanic}`];
         if (r.difficulty) lines.push(`Difficulty: ${r.difficulty}`);
         if (r.crit)       lines.push(`Crits: ${r.crit}`);
         if (r.notes)      lines.push(r.notes);
@@ -701,7 +701,7 @@ function _ruleDescriptors(def) {
             for (const t of tn) tierNames.add(t);
         }
         const keys = _ruleKeys([...cats, ...tierNames, 'skill', 'ability', 'capability', 'mastery', 'tier']);
-        const lines = ['[Capabilities]', `Categories: ${cats.join(', ')}`];
+        const lines = [`Categories: ${cats.join(', ')}`];
         for (const p of (def.progressions || [])) {
             if (p.type === 'none') continue;
             const tn = p.tier_names ? ` — tiers: ${p.tier_names.join(' < ')}` : '';
@@ -716,7 +716,7 @@ function _ruleDescriptors(def) {
         const rep = def.reputation;
         const att = def.factions?.attitudes || [];
         const keys = _ruleKeys([...rep.tiers, ...att, 'reputation', 'standing', 'attitude']);
-        const lines = ['[Reputation]', `Scale ${rep.scale_min}-${rep.scale_max}, initial ${rep.initial}`,
+        const lines = [`Scale ${rep.scale_min}-${rep.scale_max}, initial ${rep.initial}`,
             `Tiers: ${rep.tiers.join(' < ')}`];
         if (att.length) lines.push(`Faction attitudes: ${att.join(', ')}`);
         out.push({ id: 'reputation', name: 'Reputation', gate: () => def.features.reputation !== false, keys, content: lines.join('\n') });
@@ -726,7 +726,7 @@ function _ruleDescriptors(def) {
         const ladder = def.rank_ladder || RANK_LADDER;
         const keys = _ruleKeys([...ladder, 'rank', 'guild', 'adventurer']);
         out.push({ id: 'ranks', name: 'Ranks', gate: () => def.features.ranks !== false,
-            keys, content: ['[Ranks]', `Ladder: ${ladder.join(' < ')}`].join('\n') });
+            keys, content: `Ladder: ${ladder.join(' < ')}` });
     }
 
     if (def.features.companions !== false && def.companions) {
@@ -734,7 +734,7 @@ function _ruleDescriptors(def) {
         const keys = _ruleKeys([...(c.roles || []), c.lieutenant_role, 'companion', 'loyalty', 'control']);
         const ly = def.loyalty || {};
         out.push({ id: 'companions', name: 'Companions', gate: () => def.features.companions !== false, keys,
-            content: ['[Companions]', `Roles: ${(c.roles || []).join(', ')}`,
+            content: [`Roles: ${(c.roles || []).join(', ')}`,
                 `Lieutenants (${c.lieutenant_role}) raise the control limit.`,
                 `Loyalty scale ${ly.scale_min ?? 0}-${ly.scale_max ?? 100}, initial ${ly.initial ?? 50}.`].join('\n') });
     }
@@ -743,7 +743,7 @@ function _ruleDescriptors(def) {
         const n = def.needs || {};
         const keys = _ruleKeys(['needs', 'meter', 'warn', 'critical', 'threshold']);
         out.push({ id: 'needs', name: 'Needs', gate: () => def.features.needs !== false, keys,
-            content: ['[Needs]', `Warn at ${n.warn_threshold ?? 30}, critical at ${n.critical_threshold ?? 10}.`,
+            content: [`Warn at ${n.warn_threshold ?? 30}, critical at ${n.critical_threshold ?? 10}.`,
                 'Meters below the warn threshold surface in context; critical demands action.'].join('\n') });
     }
 
@@ -751,8 +751,7 @@ function _ruleDescriptors(def) {
     {
         const keys = _ruleKeys([p.level_field, p.xp_field, 'level', 'experience', 'xp', 'progression', p.leveling]);
         out.push({ id: 'progression', name: 'Progression', gate: () => true, keys,
-            content: ['[Progression]',
-                `${p.uses_levels ? `Uses levels (field "${p.level_field}", start ${p.level_start})` : 'Levelless'}.`,
+            content: [`${p.uses_levels ? `Uses levels (field "${p.level_field}", start ${p.level_start})` : 'Levelless'}.`,
                 `${p.uses_xp ? `Uses XP (field "${p.xp_field}")` : 'No XP'}; leveling mode: ${p.leveling}.`].join('\n') });
     }
 
@@ -787,7 +786,7 @@ async function pruneSystemRuleEntries(def, settings) {
 // ── Summary / panel ──────────────────────────────────────────────────────────
 
 function buildSystemDefSummary(def) {
-    const lines = [`[System Definition: ${def.name}]`];
+    const lines = [`System: ${def.name}`];
     const onFeatures = ALL_FEATURES.filter(f => def.features[f] !== false);
     lines.push(`Features: ${onFeatures.join(', ') || 'none'}`);
     if (def.attributes?.length)

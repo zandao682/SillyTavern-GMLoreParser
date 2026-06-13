@@ -127,7 +127,6 @@ async function processPlotEntry(raw, settings) {
     const notes   = fields.notes || '';
 
     const content = [
-        `[Plot] ${fields.title}`,
         `Type: ${type}`,
         summary ? `Summary: ${summary}` : '',
         notes   ? `Notes: ${notes}`     : '',
@@ -145,7 +144,7 @@ async function processPlotEntry(raw, settings) {
 // ── Lorebook content ──────────────────────────────────────────────────────────
 
 function buildEventLoreContent(event) {
-    const lines = [`[World Event] ${event.title}`];
+    const lines = [];
     if (event.date)     lines.push(`Date: ${event.date}`);
     if (event.location) lines.push(`Location: ${event.location}`);
     lines.push(`Status: ${event.status}`);

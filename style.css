@@ -50,16 +50,63 @@
     color: var(--SmartThemeBodyColor, #bbb);
 }
 
+/* ── GM State drawer (top-bar, pinnable; hosts the status panel) ──────────── */
+
+#glp-drawer {
+    overflow-y: auto;
+    overflow-x: hidden;
+    max-height: calc(100dvh - var(--topBarBlockSize, 42px));
+    padding: 8px;
+}
+#glp-drawer-pin-div {
+    display: flex; justify-content: flex-end; align-items: center;
+    padding: 2px 2px 6px;
+}
+#glp-drawer-pin-div input { display: none; }
+#glp-drawer-pin-div label { cursor: pointer; opacity: 0.7; }
+#glp-drawer-pin-div label:hover { opacity: 1; }
+#glp-drawer-pin-div .checked   { display: none; color: var(--SmartThemeQuoteColor, #9b8fd6); }
+#glp-drawer-pin-div input:checked ~ label .checked   { display: inline; }
+#glp-drawer-pin-div input:checked ~ label .unchecked { display: none; }
+
 /* ── Status panel ────────────────────────────────────────────────────────── */
 
 #glp-status-panel {
-    margin: 0 4px 6px;
     border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.12));
     border-radius: 8px;
     background: var(--SmartThemeChatTintColor, rgba(0,0,0,0.25));
-    font-size: 0.82em;
-    overflow: hidden;
+    font-size: 0.85em;
 }
+
+/* Every feature subsystem is a uniform, top-level collapsible section. */
+#glp-status-panel > details {
+    border-top: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.1));
+}
+#glp-status-panel > details > summary {
+    cursor: pointer; user-select: none;
+    padding: 7px 10px;
+    font-size: 0.82em; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--SmartThemeBodyColor, #ddd);
+    list-style: none;
+}
+#glp-status-panel > details > summary::-webkit-details-marker { display: none; }
+#glp-status-panel > details > summary::before {
+    content: '▸'; display: inline-block; width: 1em;
+    color: var(--SmartThemeEmColor, #888); transition: transform 0.15s;
+}
+#glp-status-panel > details[open] > summary::before { transform: rotate(90deg); }
+#glp-status-panel > details > *:not(summary) { padding: 0 10px 8px; }
+
+/* Carried-inventory clickable items */
+.glp-inv-items { display: flex; flex-wrap: wrap; gap: 4px; }
+.glp-inv-item {
+    cursor: pointer; padding: 1px 7px; border-radius: 10px;
+    background: rgba(155,143,214,0.15);
+    color: var(--SmartThemeBodyColor, #ddd);
+}
+.glp-inv-item:hover { background: rgba(155,143,214,0.32); text-decoration: underline; }
+.glp-item-popup-body { white-space: pre-wrap; text-align: left; font-size: 0.95em; }
 
 .glp-status-empty {
     padding: 8px 12px;
