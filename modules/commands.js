@@ -8,24 +8,31 @@
  */
 
 var KNOWN_COMMANDS = {
-    '#status':     cmdStatus,
-    '#character':  cmdStatus,
-    '#vitals':     cmdVitals,
-    '#skills':     cmdSkills,
-    '#inventory':  cmdInventory,
-    '#bag':        cmdInventory,
-    '#domain':     cmdDomain,
-    '#time':       cmdTime,
-    '#quests':     cmdQuests,
-    '#rep':        cmdReputation,
-    '#reputation': cmdReputation,
-    '#factions':   cmdFactions,
-    '#events':     cmdEvents,
-    '#currency':   cmdCurrency,
-    '#gold':       cmdCurrency,
-    '#rank':       cmdRank,
-    '#companions': cmdCompanions,
-    '#help':       cmdHelp,
+    '#status':      cmdStatus,
+    '#character':   cmdStatus,
+    '#vitals':      cmdVitals,
+    '#skills':      cmdSkills,
+    '#inventory':   cmdInventory,
+    '#bag':         cmdInventory,
+    '#domain':      cmdDomain,
+    '#time':        cmdTime,
+    '#quests':      cmdQuests,
+    '#rep':         cmdReputation,
+    '#reputation':  cmdReputation,
+    '#factions':    cmdFactions,
+    '#events':      cmdEvents,
+    '#currency':    cmdCurrency,
+    '#gold':        cmdCurrency,
+    '#rank':        cmdRank,
+    '#companions':  (state, arg) => cmdCompanions(state, arg),
+    '#boons':       cmdBoons,
+    '#abilities':   cmdAbilities,
+    '#titles':      cmdTitles,
+    '#needs':       cmdNeeds,
+    '#legion':      cmdLegion,
+    '#hierarchy':   cmdLegion,
+    '#inspect':     (state, arg) => cmdInspect(state, arg),
+    '#help':        cmdHelp,
 };
 
 // ── Command handlers ──────────────────────────────────────────────────────────
@@ -124,20 +131,26 @@ function cmdTime(state) {
 function cmdHelp() {
     return [
         '[Commands]',
-        '#status / #character  — Full character sheet',
-        '#vitals               — HP/MP/resources with regen rates',
-        '#skills               — Skill list with tiers and PP',
-        '#inventory / #bag    — Inventory list',
-        '#domain              — Domain statistics',
-        '#time                — Current in-world time',
-        '#quests              — Quest tracker',
-        '#rep / #reputation   — Faction reputation standings',
-        '#factions            — Full faction roster with lore',
-        '#events              — World events log',
-        '#currency / #gold    — Wallet and denominations',
-        '#rank                — Guild / adventurer rank',
-        '#companions          — Companion roster',
-        '#help                — This list',
+        '#status / #character      — Full character sheet',
+        '#vitals                   — HP/MP/resources with regen rates',
+        '#skills                   — Skill list with tiers and PP',
+        '#inventory / #bag         — Inventory list',
+        '#domain                   — Domain statistics',
+        '#time                     — Current in-world time',
+        '#quests                   — Quest tracker',
+        '#rep / #reputation        — Faction reputation standings',
+        '#factions                 — Full faction roster with lore',
+        '#events                   — World events log',
+        '#currency / #gold         — Wallet and denominations',
+        '#rank                     — Guild / adventurer rank',
+        '#companions [name]        — Companion roster (optional filter)',
+        '#boons                    — Awarded boons list',
+        '#abilities                — All passive/active abilities',
+        '#titles                   — Earned titles (★ = active)',
+        '#needs                    — Life simulation needs meters',
+        '#legion / #hierarchy      — Full command delegation tree',
+        '#inspect [target]         — Inspect a target by awareness tier',
+        '#help                     — This list',
     ].join('\n');
 }
 
@@ -146,10 +159,48 @@ function cmdHelp() {
 /** Returns an answer string if the message is a known command, else null. */
 function tryHandleCommand(messageText) {
     if (!messageText?.trim().startsWith('#')) return null;
-    const cmd     = messageText.trim().split(/\s/)[0].toLowerCase();
+    const parts   = messageText.trim().split(/\s+/);
+    const cmd     = parts[0].toLowerCase();
+    const arg     = parts.slice(1).join(' ') || undefined;
     const handler = KNOWN_COMMANDS[cmd];
     if (!handler) return null;
-    return handler(getCharState());
+    return handler(getCharState(), arg);
+}
+
+// ── #inspect ──────────────────────────────────────────────────────────────────
+
+function cmdInspect(state, targetName) {
+    if (!targetName) return '[Inspect]\nUsage: #inspect <target name>';
+
+    const query = targetName.toLowerCase();
+    const ss    = state.skill_system;
+
+    // Determine awareness tier (0 = Novice, higher = more revealed)
+    let awareTier = 0;
+    const awSkill = ss?.skills?.['awareness'] || ss?.skills?.['Awareness'];
+    if (awSkill) awareTier = awSkill.tier_idx ?? 0;
+
+    // Search known NPCs in values (they're stored in lorebook, not state)
+    // What we can report from local state: check if they appear in world_events or quest notes
+    const hints = [];
+    for (const ev of state.world_events || []) {
+        if (ev.title?.toLowerCase().includes(query) || ev.description?.toLowerCase().includes(query))
+            hints.push(`World event: ${ev.title}`);
+    }
+    for (const [, q] of Object.entries(state.quests || {})) {
+        if (q.title?.toLowerCase().includes(query) || q.notes?.toLowerCase().includes(query))
+            hints.push(`Quest link: ${q.title}`);
+    }
+
+    const tierLabel = (ss?.tier_names || getSystemDef().skills?.tier_names || DEFAULT_TIER_NAMES)[awareTier] || `Tier ${awareTier + 1}`;
+    const lines = [`[Inspect: ${targetName}]`, `Awareness tier: ${tierLabel}`];
+    if (!hints.length) {
+        lines.push('No local data found. Ask the GM for more details.');
+    } else {
+        if (awareTier < 2) lines.push('(Limited awareness — only surface details visible)');
+        lines.push(...hints);
+    }
+    return lines.join('\n');
 }
 
 /** Render a command response as a temporary block in the chat DOM. */

@@ -518,3 +518,63 @@
     background: #90c870;
 }
 .glp-loyalty-val { font-size: 0.82em; color: var(--SmartThemeEmColor, #999); min-width: 24px; text-align: right; }
+
+/* ── Character creation panel ─────────────────────────────────────────────── */
+
+.glp-creation-mode { border: 1px solid var(--SmartThemeQuoteColor, #9b8fd6); border-radius: 6px; }
+.glp-creation-panel { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.glp-creation-title { font-size: 1em; font-weight: 700; color: var(--SmartThemeQuoteColor, #9b8fd6); }
+.glp-creation-steps { display: flex; flex-direction: column; gap: 4px; }
+.glp-create-step {
+    font-size: 0.85em; padding: 3px 6px; border-radius: 4px;
+    background: rgba(255,255,255,0.04);
+}
+.glp-create-done { color: #80c870; }
+.glp-create-pending { color: var(--SmartThemeEmColor, #999); font-style: italic; }
+.glp-creation-hint {
+    font-size: 0.75em; color: var(--SmartThemeEmColor, #999);
+    border-top: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.08));
+    padding-top: 6px; margin-top: 2px;
+}
+
+/* ── Boons & Titles panel ─────────────────────────────────────────────────── */
+
+.glp-boons-section { display: flex; flex-direction: column; gap: 8px; font-size: 0.85em; }
+.glp-active-title {
+    display: inline-block; margin-left: 6px;
+    padding: 1px 8px; border-radius: 10px;
+    background: rgba(155,143,214,0.18);
+    color: var(--SmartThemeQuoteColor, #9b8fd6);
+    font-size: 0.8em; font-style: italic; vertical-align: middle;
+}
+.glp-title-row { padding: 2px 0; color: var(--SmartThemeBodyColor, #ddd); }
+.glp-title-active { font-weight: 600; color: var(--SmartThemeQuoteColor, #9b8fd6); }
+.glp-title-name { margin-right: 6px; }
+.glp-title-desc { color: var(--SmartThemeEmColor, #999); font-size: 0.9em; }
+.glp-boon-row { margin: 2px 0; }
+.glp-boon-row > summary { cursor: pointer; padding: 2px 0; color: var(--SmartThemeBodyColor, #ddd); }
+.glp-boon-name { font-weight: 600; }
+.glp-boon-type { font-size: 0.8em; color: var(--SmartThemeEmColor, #999); margin-left: 4px; }
+.glp-boon-desc, .glp-boon-effects {
+    font-size: 0.85em; color: var(--SmartThemeEmColor, #aaa);
+    padding: 2px 8px; border-left: 2px solid rgba(155,143,214,0.3);
+    margin: 2px 0 2px 4px;
+}
+
+/* ── Needs panel ──────────────────────────────────────────────────────────── */
+
+.glp-needs-section { display: flex; flex-direction: column; gap: 6px; font-size: 0.85em; }
+.glp-need-row {
+    display: grid; grid-template-columns: 90px 1fr 52px;
+    gap: 6px; align-items: center;
+}
+.glp-need-label { font-weight: 600; color: var(--SmartThemeBodyColor, #ddd); font-size: 0.9em; }
+.glp-need-bar-bg {
+    height: 6px; border-radius: 3px; overflow: hidden;
+    background: rgba(255,255,255,0.08);
+}
+.glp-need-bar-fill { height: 100%; border-radius: 3px; transition: width 0.4s; }
+.glp-need-ok   { background: #80c870; }
+.glp-need-warn { background: #e0a040; }
+.glp-need-crit { background: #d04040; }
+.glp-need-val { font-size: 0.8em; color: var(--SmartThemeEmColor, #999); text-align: right; }

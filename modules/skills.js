@@ -21,17 +21,16 @@ function applySkillSystemConfig(raw) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function getTierNames(ss) { return ss.tier_names || DEFAULT_TIER_NAMES; }
+function getTierNames(ss) {
+    return ss.tier_names || getSystemDef().skills?.tier_names || DEFAULT_TIER_NAMES;
+}
 
 /** PP cost for one level within a given tier index (0-based). */
 function ppPerLevel(ss, tierIdx) {
     if (ss.mode !== 'pp') return ss.uses_threshold || 5;
     const tierRank = tierIdx + 1;
-    try {
-        const formula = ss.pp_per_level_formula.replace(/tier_rank/g, tierRank);
-        if (!/^[\d\s+\-*/().]+$/.test(formula)) return 100 * tierRank;
-        return Math.max(1, Math.round(Function('"use strict"; return (' + formula + ')')()));
-    } catch { return 100 * tierRank; }
+    const formula  = ss.pp_per_level_formula || getSystemDef().skills?.pp_per_level_formula;
+    return Math.max(1, Math.round(evalFormula(formula, { tier_rank: tierRank }, 100 * tierRank)));
 }
 
 /** Get or lazily-create a skill entry. */
@@ -64,14 +63,10 @@ function recalcTotalLevels(ss) {
 
 /** Compute the check score for a single skill. */
 function calcSkillScore(ss, skill) {
-    try {
-        const totalLevels = recalcTotalLevels(ss);
-        const formula = ss.score_formula
-            .replace(/total_levels/g, totalLevels)
-            .replace(/skill_level/g, skill.tier_idx * ss.levels_per_tier + skill.level);
-        if (!/^[\d\s+\-*/().]+$/.test(formula)) return 10;
-        return Math.round(Function('"use strict"; return (' + formula + ')')());
-    } catch { return 10; }
+    const totalLevels = recalcTotalLevels(ss);
+    const skillLevel  = skill.tier_idx * ss.levels_per_tier + skill.level;
+    const formula     = ss.score_formula || getSystemDef().skills?.score_formula;
+    return Math.round(evalFormula(formula, { total_levels: totalLevels, skill_level: skillLevel }, 10));
 }
 
 // ── SKILL_UPDATE handler ──────────────────────────────────────────────────────

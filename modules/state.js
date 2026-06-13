@@ -20,20 +20,15 @@ var DEFAULT_TIER_NAMES = [
 var RANK_LADDER = ['F', 'E', 'D', 'C', 'B', 'A', 'S', 'SS', 'SSS'];
 
 var LORE_BLOCKS = {
-    NPC:      { begin: '[NPC_BEGIN]',      end: '[NPC_END]',      label: 'NPC'      },
     LOCATION: { begin: '[LOCATION_BEGIN]', end: '[LOCATION_END]', label: 'Location' },
     FACTION:  { begin: '[FACTION_BEGIN]',  end: '[FACTION_END]',  label: 'Faction'  },
     ITEM:     { begin: '[ITEM_BEGIN]',     end: '[ITEM_END]',     label: 'Item'     },
-    BESTIARY: { begin: '[BESTIARY_BEGIN]', end: '[BESTIARY_END]', label: 'Bestiary' },
     RULE:     { begin: '[RULE_BEGIN]',     end: '[RULE_END]',     label: 'Rule'     },
     EVENT:    { begin: '[EVENT_BEGIN]',    end: '[EVENT_END]',    label: 'Event'    },
     QUEST:    { begin: '[QUEST_BEGIN]',    end: '[QUEST_END]',    label: 'Quest'    },
 };
 
 var UPDATE_BLOCKS = {
-    NPC_UPDATE:         { begin: '[NPC_UPDATE_BEGIN]',         end: '[NPC_UPDATE_END]'         },
-    NPC_ATTR_CHANGE:    { begin: '[NPC_ATTR_CHANGE_BEGIN]',    end: '[NPC_ATTR_CHANGE_END]'    },
-    NPC_MEMORY:         { begin: '[NPC_MEMORY_BEGIN]',         end: '[NPC_MEMORY_END]'         },
     ITEM_UPDATE:        { begin: '[ITEM_UPDATE_BEGIN]',        end: '[ITEM_UPDATE_END]'        },
     QUEST_UPDATE:       { begin: '[QUEST_UPDATE_BEGIN]',       end: '[QUEST_UPDATE_END]'       },
     FACTION_UPDATE:     { begin: '[FACTION_UPDATE_BEGIN]',     end: '[FACTION_UPDATE_END]'     },
@@ -41,9 +36,13 @@ var UPDATE_BLOCKS = {
 };
 
 var SHEET_BLOCKS = {
-    PLAYER_SHEET:      { begin: '[PLAYER_SHEET_BEGIN]',      end: '[PLAYER_SHEET_END]'      },
-    PLAYER_UPDATE:     { begin: '[PLAYER_UPDATE_BEGIN]',     end: '[PLAYER_UPDATE_END]'     },
-    ATTR_CHANGE:       { begin: '[ATTR_CHANGE_BEGIN]',       end: '[ATTR_CHANGE_END]'       },
+    // ── Unified entities (player / npc / companion / creature) ──────────────────
+    ENTITY:        { begin: '[ENTITY_BEGIN]',        end: '[ENTITY_END]'        },
+    ENTITY_UPDATE: { begin: '[ENTITY_UPDATE_BEGIN]', end: '[ENTITY_UPDATE_END]' },
+    ENTITY_EVENT:  { begin: '[ENTITY_EVENT_BEGIN]',  end: '[ENTITY_EVENT_END]'  },
+    ENTITY_MEMORY: { begin: '[ENTITY_MEMORY_BEGIN]', end: '[ENTITY_MEMORY_END]' },
+    // ── Abilities (boon / title / passive / trait / evolution) ──────────────────
+    ABILITY:           { begin: '[ABILITY_BEGIN]',          end: '[ABILITY_END]'           },
     WORLD_TIME:        { begin: '[WORLD_TIME_BEGIN]',        end: '[WORLD_TIME_END]'        },
     SKILL_UPDATE:      { begin: '[SKILL_UPDATE_BEGIN]',      end: '[SKILL_UPDATE_END]'      },
     SKILL_SYSTEM:      { begin: '[SKILL_SYSTEM_BEGIN]',      end: '[SKILL_SYSTEM_END]'      },
@@ -54,10 +53,17 @@ var SHEET_BLOCKS = {
     CURRENCY_UPDATE:   { begin: '[CURRENCY_UPDATE_BEGIN]',   end: '[CURRENCY_UPDATE_END]'   },
     RANK_CHANGE:       { begin: '[RANK_CHANGE_BEGIN]',       end: '[RANK_CHANGE_END]'       },
     XP_AWARD:          { begin: '[XP_AWARD_BEGIN]',          end: '[XP_AWARD_END]'          },
-    COMPANION_UPDATE:  { begin: '[COMPANION_UPDATE_BEGIN]',  end: '[COMPANION_UPDATE_END]'  },
-    EVOLUTION:         { begin: '[EVOLUTION_BEGIN]',         end: '[EVOLUTION_END]'         },
     COMMAND_RESPONSE:  { begin: '[COMMAND_RESPONSE_BEGIN]',  end: '[COMMAND_RESPONSE_END]'  },
     CARD_OUTPUT:       { begin: '[CARD_OUTPUT_BEGIN]',       end: '[CARD_OUTPUT_END]'       },
+    // ── Character creation session ────────────────────────────────────────────
+    CHAR_CREATE_BEGIN:    { begin: '[CHAR_CREATE_BEGIN]',    end: '[CHAR_CREATE_END]'    },
+    CHAR_CREATE_STEP:     { begin: '[CHAR_CREATE_STEP_BEGIN]', end: '[CHAR_CREATE_STEP_END]' },
+    CHAR_CREATE_FINALIZE: { begin: '[CHAR_CREATE_FINALIZE_BEGIN]', end: '[CHAR_CREATE_FINALIZE_END]' },
+    // ── Life simulation ───────────────────────────────────────────────────────
+    NEEDS_SYSTEM: { begin: '[NEEDS_SYSTEM_BEGIN]', end: '[NEEDS_SYSTEM_END]' },
+    NEEDS_UPDATE: { begin: '[NEEDS_UPDATE_BEGIN]', end: '[NEEDS_UPDATE_END]' },
+    // ── System definition (ruleset) ─────────────────────────────────────────────
+    SYSTEM_DEF:   { begin: '[SYSTEM_DEF_BEGIN]',   end: '[SYSTEM_DEF_END]'   },
 };
 
 // Fields that carry metadata about the lorebook entry itself (not game data)
@@ -81,6 +87,7 @@ var DEFAULT_SETTINGS = Object.freeze({
     showSkillPanel: true, showDomainPanel: true,
     showQuestPanel: true, showRepPanel: true,
     showEventsPanel: true, showCurrencyPanel: true,
+    showBoonPanel: true, showNeedsPanel: true,
     interceptCommands: true, plotLorebook: '',
 });
 
@@ -106,9 +113,19 @@ var DEFAULT_CHAR_STATE = Object.freeze({
     reputation: {},       // slug → { name, standing, tier, tier_labels[], history[] }
     world_events: [],     // [{ id, title, date, location, description, consequences, status, resolution }]
     currency: {},         // denomination → amount   e.g. { copper: 0, silver: 0, gold: 0 }
-    companions: {},       // slug → { name, type, control_cost, loyalty, status, notes }
+    companions: {},       // slug → { name, type, control_cost, loyalty, status, notes, ap_unspent, ap_total, attributes, role }
     adventurer_rank: { rank: 'F', rank_ladder: null, quest_count: 0, history: [] },
-    schema_version: 3,
+    // ── v4 additions ──────────────────────────────────────────────────────
+    abilities: [],        // [{ id, name, category, activation, description, effects, entity_slug, active, stat_changes, keywords[] }]
+    needs: {},            // meter_name → { value, max, label, warn_threshold, critical_threshold }
+    char_creation: {      // interactive creation session
+        active: false,
+        steps_completed: [],
+        draft: {},
+    },
+    // ── v5 additions ──────────────────────────────────────────────────────
+    system_def: null,     // active ruleset (see modules/system.js); null → DEFAULT_SYSTEM_DEF
+    schema_version: 5,
 });
 
 // ── State accessors ───────────────────────────────────────────────────────────
@@ -142,6 +159,31 @@ function getCharState() {
     if (!s.currency)         s.currency         = {};
     if (!s.companions)       s.companions       = {};
     if (!s.adventurer_rank)  s.adventurer_rank  = structuredClone(DEFAULT_CHAR_STATE.adventurer_rank);
+    // v4 migration
+    if (!s.abilities)        s.abilities        = [];
+    if (!s.needs)            s.needs            = {};
+    if (!s.char_creation)    s.char_creation    = structuredClone(DEFAULT_CHAR_STATE.char_creation);
+    // per-companion v4 fields
+    for (const c of Object.values(s.companions || {})) {
+        if (c.ap_unspent  === undefined) c.ap_unspent  = 0;
+        if (c.ap_total    === undefined) c.ap_total    = 0;
+        if (!c.attributes)               c.attributes  = {};
+        if (!c.role)                     c.role        = 'standard';
+    }
+    // v5 migration
+    if (s.system_def === undefined) s.system_def = null;
+    if (!s.abilities) s.abilities = [];
+    // Fold any pre-v5 boons/titles into the unified abilities list
+    for (const b of (s.boons || []))
+        s.abilities.push({ id: `boon:player:${(b.name||'').toLowerCase().replace(/\s+/g,'-')}`, name: b.name, category: 'boon',
+            activation: b.activation || 'always', description: b.description || '', effects: b.effects || '',
+            entity_slug: 'player', active: true, stat_changes: '', keywords: b.keywords || [b.name] });
+    for (const t of (s.titles || []))
+        s.abilities.push({ id: `title:player:${(t.name||'').toLowerCase().replace(/\s+/g,'-')}`, name: t.name, category: 'title',
+            activation: 'always', description: t.description || '', effects: '', entity_slug: 'player',
+            active: !!t.active, stat_changes: '', keywords: t.keywords || [t.name] });
+    delete s.boons; delete s.titles;
+    if (!s.schema_version || s.schema_version < 5) s.schema_version = 5;
     return s;
 }
 

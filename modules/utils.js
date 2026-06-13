@@ -65,6 +65,31 @@ function parseFields(raw) {
     return fields;
 }
 
+/** Parse only TOP-LEVEL (non-indented) key: value lines, skipping the indented
+ *  `schema:` block. Use this for blocks that carry a schema section (ENTITY,
+ *  PLAYER_SHEET) so schema field descriptors (label/type/group/…) do not collide
+ *  with or pollute block-level fields and values. */
+function parseFlatFields(raw) {
+    const fields = {};
+    let ck = null;
+    for (const line of raw.split('\n')) {
+        if (/^\s/.test(line)) {
+            // indented continuation of a top-level field (no colon) — append; else skip (schema body)
+            if (ck && line.indexOf(':') === -1 && line.trim()) fields[ck] += ' ' + line.trim();
+            continue;
+        }
+        const t = line.trim();
+        if (!t) { ck = null; continue; }
+        if (t.toLowerCase() === 'schema:') { ck = null; continue; }
+        const colon = t.indexOf(':');
+        if (colon === -1) { ck = null; continue; }
+        const key = t.slice(0, colon).trim().toLowerCase().replace(/\s+/g, '_');
+        fields[key] = t.slice(colon + 1).trim();
+        ck = key;
+    }
+    return fields;
+}
+
 /** Extract all [BEGIN]…[END] pairs from a text string. */
 function extractBlocks(text, begin, end) {
     const blocks = [];

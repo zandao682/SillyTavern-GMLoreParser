@@ -1,42 +1,18 @@
 /**
  * gm-lore-parser / modules/currency.js
- * Handles: Currency, Adventurer/Creature rank tracking, Companion management,
- *          XP awards, and Evolution events.
+ * Handles: Currency, Adventurer/Creature rank tracking, Companion management
+ *          (loyalty / control limit / role / AP point-buy), and XP awards.
+ *          Companions are authored via [ENTITY type:companion]; applyCompanionUpdate
+ *          is the companion-rules layer the entity core delegates to.
  *
- * Block protocol:
+ *   [CURRENCY_UPDATE_BEGIN] … [CURRENCY_UPDATE_END]   gold: +10 / silver: -5 (delta or abs)
+ *   [RANK_CHANGE_BEGIN] … [RANK_CHANGE_END]           type: adventurer|creature, rank, reason
+ *   [XP_AWARD_BEGIN] … [XP_AWARD_END]                 amount, reason, modifier
  *
- *   [CURRENCY_UPDATE_BEGIN] … [CURRENCY_UPDATE_END]
- *     gold: +10
- *     silver: -5
- *     copper: +300
- *     (any denomination name is supported; value is a delta or abs)
- *
- *   [RANK_CHANGE_BEGIN] … [RANK_CHANGE_END]
- *     type:    adventurer | creature   (default: adventurer)
- *     name:    <character/creature name, defaults to PC>
- *     rank:    B
- *     reason:  Completed third B-rank quest
- *     rank_ladder: F,E,D,C,B,A,S,SS,SSS  (optional override, comma-separated)
- *
- *   [XP_AWARD_BEGIN] … [XP_AWARD_END]
- *     amount:  250
- *     reason:  Defeated the Forest Golem
- *     modifier: 1.5   (multiplier, optional)
- *
- *   [COMPANION_UPDATE_BEGIN] … [COMPANION_UPDATE_END]
- *     name:          Ember the Fox
- *     type:          Familiar
- *     control_cost:  1
- *     loyalty:       85
- *     status:        Active | Dismissed | Lost
- *     notes:         Burned three bandits
- *
- *   [EVOLUTION_BEGIN] … [EVOLUTION_END]
- *     name:         The Ember Awakening
- *     trigger:      Reached 1000 total Vigor damage dealt
- *     description:  Ember's fur ignites permanently…
- *     new_traits:   Fire Aura, Heat Resistance
- *     stat_changes: MGT +5, RES +3
+ *   Companion (via [ENTITY type:companion] / [ENTITY_UPDATE type:companion]):
+ *     name, type, control_cost, loyalty, status, role, notes,
+ *     ap_award: N, attribute_allocate: might:5, agility:3
+ *     (a companion may also carry a `schema:` for the shared stat-block engine)
  */
 
 // ── Currency ──────────────────────────────────────────────────────────────────
@@ -75,7 +51,7 @@ function applyRankChange(raw) {
         if (fields.rank_ladder) {
             ar.rank_ladder = fields.rank_ladder.split(',').map(r => r.trim()).filter(Boolean);
         }
-        const ladder      = ar.rank_ladder || RANK_LADDER;
+        const ladder      = ar.rank_ladder || getRankLadder();
         const prevRank    = ar.rank;
         ar.rank           = fields.rank.trim().toUpperCase();
         const rankIdx     = ladder.indexOf(ar.rank);
@@ -90,7 +66,7 @@ function applyRankChange(raw) {
         const targetName = fields.name || 'creature';
         const slug       = slugify(targetName);
         if (!state.companions[slug]) {
-            state.companions[slug] = { name: targetName, type: 'Creature', rank: 'F', control_cost: 0, loyalty: 50, status: 'Active', notes: '', history: [] };
+            state.companions[slug] = { name: targetName, type: 'Creature', rank: getRankLadder()[0], control_cost: 0, loyalty: (getSystemDef().loyalty?.initial ?? 50), status: 'Active', notes: '', history: [] };
         }
         const comp       = state.companions[slug];
         const prevRank   = comp.rank || 'F';
@@ -129,14 +105,14 @@ function applyXpAward(raw) {
 // ── Companion update ──────────────────────────────────────────────────────────
 
 async function applyCompanionUpdate(raw, settings) {
-    const fields = parseFields(raw);
-    if (!fields.name) { console.warn(`[${MODULE_NAME}] COMPANION_UPDATE missing name`); return false; }
+    const fields = parseFlatFields(raw);   // top-level only (a companion may carry a schema)
+    if (!fields.name) { console.warn(`[${MODULE_NAME}] ENTITY(companion) missing name`); return false; }
 
     const slug  = slugify(fields.name);
     const state = getCharState();
 
     if (!state.companions[slug]) {
-        state.companions[slug] = { name: fields.name, type: '', control_cost: 0, loyalty: 50, status: 'Active', notes: '', history: [] };
+        state.companions[slug] = { name: fields.name, type: '', control_cost: 0, loyalty: (getSystemDef().loyalty?.initial ?? 50), status: 'Active', notes: '', history: [] };
     }
     const comp = state.companions[slug];
 
@@ -145,8 +121,44 @@ async function applyCompanionUpdate(raw, settings) {
     if (fields.loyalty)      comp.loyalty       = parseInt(fields.loyalty)      || comp.loyalty;
     if (fields.status)       comp.status        = fields.status;
     if (fields.notes)        comp.notes         = fields.notes;
+    if (fields.role)         comp.role          = fields.role;
 
-    comp.loyalty = Math.max(0, Math.min(100, comp.loyalty));
+    // Ensure v4 AP fields exist
+    if (comp.ap_unspent  === undefined) comp.ap_unspent  = 0;
+    if (comp.ap_total    === undefined) comp.ap_total    = 0;
+    if (!comp.attributes)               comp.attributes  = {};
+
+    // AP award
+    if (fields.ap_award) {
+        const gained = parseInt(fields.ap_award) || 0;
+        comp.ap_unspent += gained;
+        comp.ap_total   += gained;
+        console.log(`[${MODULE_NAME}] Companion "${comp.name}" AP award: +${gained} (unspent: ${comp.ap_unspent})`);
+    }
+
+    // Attribute allocation — spends from ap_unspent
+    if (fields.attribute_allocate) {
+        let allocObj = {};
+        try { allocObj = JSON.parse(fields.attribute_allocate); } catch (_) {
+            // Fallback: "might:5,agility:3" style
+            fields.attribute_allocate.split(',').forEach(pair => {
+                const [k, v] = pair.split(':').map(s => s.trim());
+                if (k && v) allocObj[k] = parseInt(v) || 0;
+            });
+        }
+        const totalCost = Object.values(allocObj).reduce((a, b) => a + b, 0);
+        if (totalCost > comp.ap_unspent) {
+            console.warn(`[${MODULE_NAME}] Companion "${comp.name}" AP allocation (${totalCost}) exceeds unspent (${comp.ap_unspent}) — applying anyway.`);
+        }
+        for (const [attr, pts] of Object.entries(allocObj)) {
+            comp.attributes[attr] = (comp.attributes[attr] || 0) + pts;
+        }
+        comp.ap_unspent = Math.max(0, comp.ap_unspent - totalCost);
+        console.log(`[${MODULE_NAME}] Companion "${comp.name}" allocated ${totalCost} AP.`);
+    }
+
+    const loy = getSystemDef().loyalty || { scale_min: 0, scale_max: 100 };
+    comp.loyalty = Math.max(loy.scale_min ?? 0, Math.min(loy.scale_max ?? 100, comp.loyalty));
 
     // Control limit check
     const totalCost = Object.values(state.companions)
@@ -169,52 +181,35 @@ async function applyCompanionUpdate(raw, settings) {
     return true;
 }
 
+/** Max of the active loyalty scale (for display). */
+function loyaltyScaleMax() { return getSystemDef().loyalty?.scale_max ?? 100; }
+/** Normalize a loyalty value to a 0-100 percentage for bar widths. */
+function loyaltyPct(v) {
+    const loy  = getSystemDef().loyalty || { scale_min: 0, scale_max: 100 };
+    const span = ((loy.scale_max ?? 100) - (loy.scale_min ?? 0)) || 1;
+    return Math.max(0, Math.min(100, ((v - (loy.scale_min ?? 0)) / span) * 100));
+}
+
 function buildCompanionContent(comp) {
     const lines = [`[Companion] ${comp.name}`];
     if (comp.type)         lines.push(`Type: ${comp.type}`);
     lines.push(`Status: ${comp.status}`);
-    lines.push(`Loyalty: ${comp.loyalty}/100`);
+    lines.push(`Loyalty: ${comp.loyalty}/${loyaltyScaleMax()}`);
     if (comp.control_cost) lines.push(`Control Cost: ${comp.control_cost}`);
     if (comp.rank)         lines.push(`Rank: ${comp.rank}`);
+    if (comp.role && comp.role !== 'standard') lines.push(`Role: ${comp.role}`);
+    if (comp.attributes && Object.keys(comp.attributes).length)
+        lines.push(`Attributes: ${Object.entries(comp.attributes).map(([k, v]) => `${k}:${v}`).join(', ')}`);
+    // Shared stat block (companions may carry the same schema engine as any entity)
+    if (comp.schema && Object.keys(comp.schema.fields || {}).length)
+        lines.push(buildValueSummary('Stats', comp.schema, comp.values || {}).split('\n').slice(1).join('\n'));
     if (comp.notes)        lines.push(`Notes: ${comp.notes}`);
     return lines.join('\n');
 }
 
-// ── Evolution ─────────────────────────────────────────────────────────────────
-
-async function applyEvolution(raw, settings) {
-    const fields = parseFields(raw);
-    if (!fields.name) { console.warn(`[${MODULE_NAME}] EVOLUTION missing name`); return false; }
-
-    const state = getCharState();
-    if (!state.evolutions) state.evolutions = [];
-
-    const evo = {
-        name:        fields.name,
-        trigger:     fields.trigger     || '',
-        description: fields.description || '',
-        new_traits:  fields.new_traits  ? fields.new_traits.split(',').map(t => t.trim()) : [],
-        stat_changes: fields.stat_changes || '',
-    };
-    state.evolutions.push(evo);
-
-    // Evolutions can also update lorebook — log as a character history entry
-    if (settings.campaignLorebook) {
-        const keywords = [fields.name.toLowerCase(), 'evolution', 'transformation'];
-        const content  = [
-            `[Evolution] ${evo.name}`,
-            evo.trigger     ? `Trigger: ${evo.trigger}`          : '',
-            evo.description ? `Description: ${evo.description}`  : '',
-            evo.new_traits.length ? `New traits: ${evo.new_traits.join(', ')}` : '',
-            evo.stat_changes ? `Stat changes: ${evo.stat_changes}` : '',
-        ].filter(Boolean).join('\n');
-        await upsertEntry(settings.campaignLorebook, {
-            ...entryBase(`[Evolution] ${evo.name}`, keywords, content, settings.loreOrder, settings, { type: 'EVOLUTION' }),
-        });
-    }
-    console.log(`[${MODULE_NAME}] Evolution: "${evo.name}"`);
-    return true;
-}
+// Evolution is now an ability category (modules/abilities.js): an
+// [ABILITY category:evolution stat_changes:…] applies its stat changes to the
+// owner via the player event path and records new traits as trait abilities.
 
 // ── Context string ────────────────────────────────────────────────────────────
 
@@ -240,9 +235,10 @@ function buildCompanionContextString(companions) {
     const active = Object.values(companions).filter(c => c.status === 'Active');
     if (!active.length) return '';
     const lines = ['[Companions]'];
+    const max = loyaltyScaleMax();
     for (const c of active) {
         const rankStr = c.rank ? ` [${c.rank}]` : '';
-        lines.push(`  ${c.name}${rankStr} — Loyalty: ${c.loyalty}/100`);
+        lines.push(`  ${c.name}${rankStr} — Loyalty: ${c.loyalty}/${max}`);
     }
     return lines.join('\n');
 }
@@ -263,7 +259,7 @@ function buildCurrencyPanel(currency, adventurer_rank, companions) {
 
     // Guild rank
     if (adventurer_rank?.rank) {
-        const ladder = adventurer_rank.rank_ladder || RANK_LADDER;
+        const ladder = adventurer_rank.rank_ladder || getRankLadder();
         const idx    = ladder.indexOf(adventurer_rank.rank);
         const pct    = idx >= 0 ? Math.round((idx / (ladder.length - 1)) * 100) : 0;
         sections.push(`<div class="glp-section"><div class="glp-section-title">Guild Rank</div>
@@ -280,7 +276,7 @@ function buildCurrencyPanel(currency, adventurer_rank, companions) {
             const rankBadge = c.rank ? `<span class="glp-rank-badge">${c.rank}</span>` : '';
             return `<div class="glp-companion-row">
                 <span class="glp-companion-name">${c.name}</span>${rankBadge}
-                <div class="glp-loyalty-bar-wrap"><div class="glp-loyalty-bar" style="width:${c.loyalty}%"></div></div>
+                <div class="glp-loyalty-bar-wrap"><div class="glp-loyalty-bar" style="width:${loyaltyPct(c.loyalty)}%"></div></div>
                 <span class="glp-loyalty-val">${c.loyalty}</span>
             </div>`;
         }).join('');
@@ -307,14 +303,59 @@ function cmdRank(state) {
     return lines.join('\n');
 }
 
-function cmdCompanions(state) {
+function cmdCompanions(state, filterName) {
     const comps = Object.values(state.companions || {});
     if (!comps.length) return '[Companions]\nNo companions recorded.';
+    const target = filterName ? filterName.toLowerCase() : null;
+    const filtered = target ? comps.filter(c => c.name.toLowerCase().includes(target)) : comps;
+    if (!filtered.length) return `[Companions]\nNo companion matching "${filterName}" found.`;
     const lines = ['[Companions]'];
-    for (const c of comps) {
+    for (const c of filtered) {
         const rankStr = c.rank ? ` [${c.rank}]` : '';
-        lines.push(`  ${c.name}${rankStr} (${c.status}) — Loyalty: ${c.loyalty}/100`);
+        lines.push(`  ${c.name}${rankStr} (${c.status}) — Loyalty: ${c.loyalty}/${loyaltyScaleMax()}`);
+        if (c.role && c.role !== 'standard') lines.push(`    Role: ${c.role}`);
+        if (c.ap_unspent || c.ap_total) lines.push(`    AP: ${c.ap_unspent} unspent / ${c.ap_total} total`);
+        if (c.attributes && Object.keys(c.attributes).length)
+            lines.push(`    Attributes: ${Object.entries(c.attributes).map(([k, v]) => `${k}:${v}`).join(', ')}`);
         if (c.notes) lines.push(`    ${c.notes}`);
     }
+    return lines.join('\n');
+}
+
+function cmdLegion(state) {
+    const comps = state.companions || {};
+    const limit = state.values?.control_limit || state.values?.control_limit_max;
+    const active = Object.values(comps).filter(c => c.status === 'Active');
+    const usedSlots = active.reduce((sum, c) => sum + (parseInt(c.control_cost) || 0), 0);
+
+    const lines = ['[Legion / Hierarchy]'];
+    if (limit !== undefined) lines.push(`Control Limit: ${usedSlots}/${limit}`);
+
+    // Separate lieutenants from standard minions
+    const lieutenants = active.filter(c => c.role === 'lieutenant');
+    const standards   = active.filter(c => c.role !== 'lieutenant');
+
+    // Direct command (no lieutenant)
+    const directMinions = standards.filter(c => !c.assigned_to);
+    if (directMinions.length) {
+        lines.push('\nDirect Command:');
+        for (const c of directMinions) {
+            const rankStr = c.rank ? ` [${c.rank}]` : '';
+            lines.push(`  ○ ${c.name}${rankStr} — cost:${c.control_cost || 0} loyalty:${c.loyalty}`);
+        }
+    }
+
+    // Lieutenant subtrees
+    for (const lt of lieutenants) {
+        const rankStr  = lt.rank ? ` [${lt.rank}]` : '';
+        lines.push(`\nLieutenant: ${lt.name}${rankStr} — cost:${lt.control_cost || 0} loyalty:${lt.loyalty}`);
+        const delegated = active.filter(c => c.assigned_to && c.assigned_to.toLowerCase() === lt.name.toLowerCase());
+        for (const sub of delegated) {
+            const subRank = sub.rank ? ` [${sub.rank}]` : '';
+            lines.push(`    └ ${sub.name}${subRank} — cost:${sub.control_cost || 0} loyalty:${sub.loyalty}`);
+        }
+    }
+
+    if (!active.length) lines.push('No active companions.');
     return lines.join('\n');
 }

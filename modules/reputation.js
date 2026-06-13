@@ -22,17 +22,40 @@
  */
 
 // ── Tier logic ────────────────────────────────────────────────────────────────
+// Scale, tiers, and initial standing all come from the active system definition
+// (modules/system.js). DEFAULT_REP_TIERS is the fallback when no def is loaded.
 
 var DEFAULT_REP_TIERS = ['Hostile', 'Cold', 'Neutral', 'Friendly', 'Allied', 'Sworn'];
 
+function _repDef() {
+    const r = getSystemDef().reputation || {};
+    return {
+        min:     r.scale_min ?? 0,
+        max:     r.scale_max ?? 100,
+        initial: r.initial   ?? 50,
+        tiers:   (r.tiers && r.tiers.length >= 2) ? r.tiers : DEFAULT_REP_TIERS,
+    };
+}
+
 function getTierForStanding(standing, tierLabels) {
-    const labels = (tierLabels && tierLabels.length >= 2) ? tierLabels : DEFAULT_REP_TIERS;
-    const n   = labels.length;
-    const idx = Math.min(Math.floor((standing / 100) * n), n - 1);
+    const def    = _repDef();
+    const labels = (tierLabels && tierLabels.length >= 2) ? tierLabels : def.tiers;
+    const n      = labels.length;
+    const span   = (def.max - def.min) || 1;
+    const frac    = (standing - def.min) / span;
+    const idx     = Math.min(Math.floor(frac * n), n - 1);
     return labels[Math.max(0, idx)];
 }
 
-function clampStanding(v) { return Math.max(0, Math.min(100, v)); }
+function clampStanding(v) {
+    const def = _repDef();
+    return Math.max(def.min, Math.min(def.max, v));
+}
+
+/** Initial standing for a newly-seeded faction (def-driven). */
+function initialStanding() { return _repDef().initial; }
+/** Max of the active reputation scale (for display). */
+function repScaleMax() { return _repDef().max; }
 
 // ── Combined lorebook entry builder ──────────────────────────────────────────
 // Called by both processFactionBlock and applyReputationUpdate so the entry
@@ -65,8 +88,8 @@ async function rebuildFactionLoreEntry(slug, settings) {
         }
     }
     if (rep) {
-        lines.push(`Standing: ${rep.standing}/100 (${rep.tier})`);
-        const tierScale = rep.tier_labels?.join(' → ') || DEFAULT_REP_TIERS.join(' → ');
+        lines.push(`Standing: ${rep.standing}/${repScaleMax()} (${rep.tier})`);
+        const tierScale = rep.tier_labels?.join(' → ') || _repDef().tiers.join(' → ');
         lines.push(`Tier scale: ${tierScale}`);
         if (rep.history?.length) {
             const last = rep.history[rep.history.length - 1];
@@ -107,13 +130,13 @@ async function processFactionBlock(fields, settings) {
         history: existing.history || [],
     };
 
-    // Auto-seed reputation entry at Neutral (50) if not yet tracked
+    // Auto-seed reputation entry at the system's initial standing if not yet tracked
     if (!state.reputation[slug]) {
-        const initialStanding = 50;
+        const seed = initialStanding();
         state.reputation[slug] = {
             name:        fields.name,
-            standing:    initialStanding,
-            tier:        getTierForStanding(initialStanding, null),
+            standing:    seed,
+            tier:        getTierForStanding(seed, null),
             tier_labels: null,
             history:     [],
         };
@@ -180,10 +203,11 @@ async function applyReputationUpdate(raw, settings) {
     const state = getCharState();
 
     if (!state.reputation[slug]) {
+        const seed = initialStanding();
         state.reputation[slug] = {
             name:        faction,
-            standing:    50,
-            tier:        getTierForStanding(50, null),
+            standing:    seed,
+            tier:        getTierForStanding(seed, null),
             tier_labels: null,
             history:     [],
         };
@@ -236,8 +260,9 @@ function buildRepContextString(reputation) {
     const entries = Object.values(reputation);
     if (!entries.length) return '';
     const lines = ['[Faction Reputation]'];
+    const max = repScaleMax();
     for (const rep of entries)
-        lines.push(`  ${rep.name}: ${rep.standing}/100 — ${rep.tier}`);
+        lines.push(`  ${rep.name}: ${rep.standing}/${max} — ${rep.tier}`);
     return lines.join('\n');
 }
 
@@ -249,7 +274,7 @@ function buildFactionContextString(factions, reputation) {
         const f   = factions[slug];
         const rep = reputation[slug];
         const name = (f || rep).name;
-        const standing = rep ? ` — ${rep.standing}/100 (${rep.tier})` : '';
+        const standing = rep ? ` — ${rep.standing}/${repScaleMax()} (${rep.tier})` : '';
         lines.push(`  ${name}${standing}`);
         if (f?.goals)      lines.push(`    Goals: ${f.goals}`);
         if (f?.leadership) lines.push(`    Led by: ${f.leadership}`);
@@ -265,11 +290,13 @@ function buildRepPanelHTML(factions, reputation) {
     const slugs = new Set([...Object.keys(factions), ...Object.keys(reputation)]);
     if (!slugs.size) return '<div class="glp-panel-empty">No factions recorded.</div>';
 
+    const def = _repDef();
     return [...slugs].map(slug => {
         const f   = factions[slug];
         const rep = reputation[slug];
         const name  = (f || rep).name;
-        const pct   = rep ? rep.standing : 50;
+        const span  = (def.max - def.min) || 1;
+        const pct   = rep ? Math.max(0, Math.min(100, ((rep.standing - def.min) / span) * 100)) : 50;
         const tier  = rep ? rep.tier : '—';
         const tierClass = `glp-rep-${tier.toLowerCase()}`;
         const attitude  = f?.attitude_to_party && f.attitude_to_party !== 'Unknown'
@@ -296,8 +323,9 @@ function cmdReputation(state) {
     const rep = state.reputation || {};
     if (!Object.keys(rep).length) return '[Reputation]\nNo faction relations recorded.';
     const lines = ['[Reputation]'];
+    const max = repScaleMax();
     for (const r of Object.values(rep)) {
-        lines.push(`  ${r.name}: ${r.standing}/100 (${r.tier})`);
+        lines.push(`  ${r.name}: ${r.standing}/${max} (${r.tier})`);
         if (r.history.length) {
             const last = r.history[r.history.length - 1];
             if (last.reason) lines.push(`    Last: ${last.reason}`);
@@ -317,7 +345,7 @@ function cmdFactions(state) {
         const f   = factions[slug];
         const rep = reputation[slug];
         const name     = (f || rep).name;
-        const standing = rep ? ` (${rep.standing}/100, ${rep.tier})` : '';
+        const standing = rep ? ` (${rep.standing}/${repScaleMax()}, ${rep.tier})` : '';
         lines.push(`  ${name}${standing}`);
         if (f?.type)              lines.push(`    Type: ${f.type}`);
         if (f?.leadership)        lines.push(`    Leadership: ${f.leadership}`);

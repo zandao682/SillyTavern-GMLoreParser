@@ -3,7 +3,8 @@
  *
  * Entry point only. All logic lives in modules/. Load order matters:
  * state → utils → lorebook → schema → skills → domain → lore → sheet
- *   → quests → reputation → events → currency → commands → panel → context
+ *   → creation → quests → reputation → events → currency → boons → needs
+ *   → commands → panel → context
  *
  * To add a new block type:
  *   1. Add its begin/end strings to UPDATE_BLOCKS or SHEET_BLOCKS in modules/state.js
@@ -21,15 +22,20 @@ var GLP_MODULE_LOAD_ORDER = [
     'state',      // constants, block registries, settings/state accessors
     'utils',      // pure utilities, parseFields, extractBlocks, parseSchema
     'lorebook',   // lorebook CRUD helpers
+    'system',     // system definition (ruleset) — getSystemDef, evalFormula
     'schema',     // schema engine (applyFieldValue, regen, promotions)
+    'entity',     // unified entity core (player/npc/companion/creature) + dispatcher
     'skills',     // skill system (PP + use_tracked)
     'domain',     // domain sub-game
-    'lore',       // NPC, item, bestiary, generic lore handlers
-    'sheet',      // player sheet handlers + world time
+    'lore',       // npc storage internals, item, generic lore handlers
+    'sheet',      // player sheet + world time
+    'creation',   // interactive character creation session
     'quests',     // quest tracker
     'reputation', // faction reputation
     'events',     // world events + plot lorebook
-    'currency',   // currency, rank, companions, XP, evolution
+    'currency',   // currency, rank, companions, XP
+    'abilities',  // unified abilities (boon/title/passive/trait/evolution)
+    'needs',      // life simulation needs meters
     'commands',   // # command interceptor
     'panel',      // status panel rendering
     'context',    // context injection
@@ -77,6 +83,7 @@ function handleCardOutput(raw) {
 async function onMessageReceived(messageId) {
     const settings = getSettings();
     if (!settings.enabled) return;
+    await loadSystemDefFromLorebook(settings);   // hydrate ruleset cache (idempotent)
     const { chat, toastr } = SillyTavern.getContext();
     const message = chat[messageId]; if (!message) return;
     if (message.is_user && !settings.scanUserMessages) {
@@ -88,61 +95,93 @@ async function onMessageReceived(messageId) {
     let sheetChanged = false;
     const notifications = [];
 
-    // ── Sheet blocks ──────────────────────────────────────────────────────────
-    for (const b of extractBlocks(text, SHEET_BLOCKS.PLAYER_SHEET.begin, SHEET_BLOCKS.PLAYER_SHEET.end))
-        { applyPlayerSheet(b.raw); sheetChanged = true; }
+    // ── System definition (must apply before any consumer this message) ────────
+    for (const b of extractBlocks(text, SHEET_BLOCKS.SYSTEM_DEF.begin, SHEET_BLOCKS.SYSTEM_DEF.end)) {
+        await saveSystemDef(parseSystemDef(b.raw), settings);
+        sheetChanged = true;
+    }
 
-    for (const b of extractBlocks(text, SHEET_BLOCKS.SKILL_SYSTEM.begin, SHEET_BLOCKS.SKILL_SYSTEM.end))
-        { applySkillSystemConfig(b.raw); sheetChanged = true; }
+    // ── Entity blocks (player / npc / companion / creature) ────────────────────
+    let loreSaved = 0;
+    for (const b of extractBlocks(text, SHEET_BLOCKS.ENTITY.begin, SHEET_BLOCKS.ENTITY.end)) {
+        const type = entityType(b.raw);
+        const ok = await onEntityBegin(b.raw, settings);
+        if (!ok) continue;
+        if (type === 'player') sheetChanged = true; else loreSaved++;
+    }
 
-    for (const b of extractBlocks(text, SHEET_BLOCKS.PLAYER_UPDATE.begin, SHEET_BLOCKS.PLAYER_UPDATE.end)) {
-        const ch = applyPlayerUpdate(b.raw);
-        if (ch.length) {
+    for (const b of extractBlocks(text, SHEET_BLOCKS.ENTITY_UPDATE.begin, SHEET_BLOCKS.ENTITY_UPDATE.end)) {
+        const type = entityType(b.raw);
+        const r = await onEntityUpdate(b.raw, settings);
+        if (!r) continue;
+        if (type === 'player' || type === 'companion') {
             sheetChanged = true;
             const p = checkPromotions(getCharState().schema?.fields || {}, getCharState().values);
             for (const x of p) notifications.push({ type: 'promotion', msg: x.reason });
+        } else {
+            loreSaved++;
+            if (r.promotions?.length)
+                for (const p of r.promotions)
+                    notifications.push({ type: 'npc_promotion', msg: `${parseFlatFields(b.raw).name}: ${p.reason}` });
         }
     }
 
-    for (const b of extractBlocks(text, SHEET_BLOCKS.ATTR_CHANGE.begin, SHEET_BLOCKS.ATTR_CHANGE.end)) {
-        const { changes, reason } = applyAttrChange(b.raw);
-        if (changes.length) {
+    for (const b of extractBlocks(text, SHEET_BLOCKS.ENTITY_EVENT.begin, SHEET_BLOCKS.ENTITY_EVENT.end)) {
+        const type = entityType(b.raw);
+        const r = await onEntityEvent(b.raw, settings);
+        if (!r || !r.changes?.length) continue;
+        if (type === 'player' || type === 'companion') {
             sheetChanged = true;
-            notifications.push({ type: 'attr_change', msg: `${reason}: ${changes.map(c => `${c.key}:${c.oldVal}→${c.newVal}`).join(', ')}` });
+            notifications.push({ type: 'attr_change', msg: `${r.reason}: ${r.changes.map(c => `${c.key}:${c.oldVal}→${c.newVal}`).join(', ')}` });
+        } else {
+            loreSaved++;
+            notifications.push({ type: 'npc_attr_change', msg: `${parseFlatFields(b.raw).name} — ${r.reason}` });
         }
     }
+
+    for (const b of extractBlocks(text, SHEET_BLOCKS.ENTITY_MEMORY.begin, SHEET_BLOCKS.ENTITY_MEMORY.end))
+        if (await onEntityMemory(b.raw, settings)) loreSaved++;
+
+    if (featureOn('abilities'))
+    for (const b of extractBlocks(text, SHEET_BLOCKS.ABILITY.begin, SHEET_BLOCKS.ABILITY.end))
+        { if (await processAbilityBlock(parseFields(b.raw), settings)) sheetChanged = true; }
+
+    if (featureOn('skills')) {
+    for (const b of extractBlocks(text, SHEET_BLOCKS.SKILL_SYSTEM.begin, SHEET_BLOCKS.SKILL_SYSTEM.end))
+        { applySkillSystemConfig(b.raw); sheetChanged = true; }
 
     for (const b of extractBlocks(text, SHEET_BLOCKS.SKILL_UPDATE.begin, SHEET_BLOCKS.SKILL_UPDATE.end)) {
         const n = applySkillUpdate(b.raw);
         if (n.length) { sheetChanged = true; for (const x of n) notifications.push({ type: x.type, msg: x.msg }); }
     }
+    }
 
+    if (featureOn('domains'))
     for (const b of extractBlocks(text, SHEET_BLOCKS.DOMAIN_UPDATE.begin, SHEET_BLOCKS.DOMAIN_UPDATE.end))
         { applyDomainUpdate(b.raw); sheetChanged = true; }
 
+    if (featureOn('reputation'))
     for (const b of extractBlocks(text, SHEET_BLOCKS.REPUTATION_UPDATE.begin, SHEET_BLOCKS.REPUTATION_UPDATE.end))
         { if (await applyReputationUpdate(b.raw, settings)) sheetChanged = true; }
 
+    if (featureOn('world_events')) {
     for (const b of extractBlocks(text, SHEET_BLOCKS.WORLD_EVENT.begin, SHEET_BLOCKS.WORLD_EVENT.end))
         { if (await applyWorldEventBlock(b.raw, settings)) sheetChanged = true; }
 
     for (const b of extractBlocks(text, SHEET_BLOCKS.PLOT_ENTRY.begin, SHEET_BLOCKS.PLOT_ENTRY.end))
         { await processPlotEntry(b.raw, settings); }
+    }
 
+    if (featureOn('currency'))
     for (const b of extractBlocks(text, SHEET_BLOCKS.CURRENCY_UPDATE.begin, SHEET_BLOCKS.CURRENCY_UPDATE.end))
         { if (applyCurrencyUpdate(b.raw)) sheetChanged = true; }
 
+    if (featureOn('ranks'))
     for (const b of extractBlocks(text, SHEET_BLOCKS.RANK_CHANGE.begin, SHEET_BLOCKS.RANK_CHANGE.end))
         { if (applyRankChange(b.raw)) sheetChanged = true; }
 
     for (const b of extractBlocks(text, SHEET_BLOCKS.XP_AWARD.begin, SHEET_BLOCKS.XP_AWARD.end))
         { if (applyXpAward(b.raw)) sheetChanged = true; }
-
-    for (const b of extractBlocks(text, SHEET_BLOCKS.COMPANION_UPDATE.begin, SHEET_BLOCKS.COMPANION_UPDATE.end))
-        { if (await applyCompanionUpdate(b.raw, settings)) sheetChanged = true; }
-
-    for (const b of extractBlocks(text, SHEET_BLOCKS.EVOLUTION.begin, SHEET_BLOCKS.EVOLUTION.end))
-        { if (await applyEvolution(b.raw, settings)) sheetChanged = true; }
 
     for (const b of extractBlocks(text, SHEET_BLOCKS.WORLD_TIME.begin, SHEET_BLOCKS.WORLD_TIME.end)) {
         const r = await applyWorldTime(b.raw, settings);
@@ -154,50 +193,51 @@ async function onMessageReceived(messageId) {
     for (const b of extractBlocks(text, SHEET_BLOCKS.CARD_OUTPUT.begin, SHEET_BLOCKS.CARD_OUTPUT.end))
         handleCardOutput(b.raw);
 
-    // ── Lore blocks ───────────────────────────────────────────────────────────
-    let loreSaved = 0;
+    // ── Character creation blocks ──────────────────────────────────────────────
+    for (const b of extractBlocks(text, SHEET_BLOCKS.CHAR_CREATE_BEGIN.begin, SHEET_BLOCKS.CHAR_CREATE_BEGIN.end))
+        { applyCharCreateBegin(b.raw); sheetChanged = true; }
+
+    for (const b of extractBlocks(text, SHEET_BLOCKS.CHAR_CREATE_STEP.begin, SHEET_BLOCKS.CHAR_CREATE_STEP.end))
+        { if (await applyCharCreateStep(b.raw, settings)) sheetChanged = true; }
+
+    for (const b of extractBlocks(text, SHEET_BLOCKS.CHAR_CREATE_FINALIZE.begin, SHEET_BLOCKS.CHAR_CREATE_FINALIZE.end))
+        { applyCharCreateFinalize(b.raw); sheetChanged = true; }
+
+    // ── Needs blocks ───────────────────────────────────────────────────────────
+    if (featureOn('needs')) {
+    for (const b of extractBlocks(text, SHEET_BLOCKS.NEEDS_SYSTEM.begin, SHEET_BLOCKS.NEEDS_SYSTEM.end))
+        { applyNeedsSystem(b.raw); sheetChanged = true; }
+
+    for (const b of extractBlocks(text, SHEET_BLOCKS.NEEDS_UPDATE.begin, SHEET_BLOCKS.NEEDS_UPDATE.end))
+        { if (applyNeedsUpdate(b.raw)) sheetChanged = true; }
+    }
+
+    // ── Lore blocks (Location / Faction / Item / Rule / Event / Quest) ─────────
     if (settings.campaignLorebook) {
         for (const [type, cfg] of Object.entries(LORE_BLOCKS)) {
             for (const b of extractBlocks(text, cfg.begin, cfg.end)) {
                 const fields = parseFields(b.raw); fields._raw = b.raw;
                 let ok = false;
-                if (type === 'NPC')      ok = await processNpcBlock(fields, settings);
-                else if (type === 'ITEM')     ok = await processItemBlock(fields, settings);
-                else if (type === 'BESTIARY') ok = await processBestiaryBlock(fields, settings);
-                else if (type === 'QUEST')    ok = await processQuestBlock(fields, settings);
-                else if (type === 'FACTION')  ok = await processFactionBlock(fields, settings);
+                if (type === 'ITEM')          ok = await processItemBlock(fields, settings);
+                else if (type === 'QUEST')    { if (featureOn('quests')) ok = await processQuestBlock(fields, settings); }
+                else if (type === 'FACTION')  { if (featureOn('reputation')) ok = await processFactionBlock(fields, settings); }
                 else ok = await processGenericLore(type, cfg, fields, settings);
                 if (ok) loreSaved++;
             }
         }
 
-        for (const b of extractBlocks(text, UPDATE_BLOCKS.NPC_UPDATE.begin, UPDATE_BLOCKS.NPC_UPDATE.end)) {
-            const r = await processNpcUpdate(b.raw, settings);
-            if (r) {
-                loreSaved++;
-                if (r.promotions?.length)
-                    for (const p of r.promotions)
-                        notifications.push({ type: 'npc_promotion', msg: `${parseFields(b.raw).name}: ${p.reason}` });
-            }
-        }
-
-        for (const b of extractBlocks(text, UPDATE_BLOCKS.NPC_ATTR_CHANGE.begin, UPDATE_BLOCKS.NPC_ATTR_CHANGE.end)) {
-            const r = await processNpcAttrChange(b.raw, settings);
-            if (r) { loreSaved++; notifications.push({ type: 'npc_attr_change', msg: `${parseFields(b.raw).name} — ${r.reason}` }); }
-        }
-
-        for (const b of extractBlocks(text, UPDATE_BLOCKS.NPC_MEMORY.begin, UPDATE_BLOCKS.NPC_MEMORY.end))
-            if (await processNpcMemory(b.raw, settings)) loreSaved++;
-
         for (const b of extractBlocks(text, UPDATE_BLOCKS.ITEM_UPDATE.begin, UPDATE_BLOCKS.ITEM_UPDATE.end))
             if (await processItemUpdate(b.raw, settings)) loreSaved++;
 
+        if (featureOn('quests'))
         for (const b of extractBlocks(text, UPDATE_BLOCKS.QUEST_UPDATE.begin, UPDATE_BLOCKS.QUEST_UPDATE.end))
             if (await applyQuestUpdate(b.raw, settings)) loreSaved++;
 
+        if (featureOn('reputation'))
         for (const b of extractBlocks(text, UPDATE_BLOCKS.FACTION_UPDATE.begin, UPDATE_BLOCKS.FACTION_UPDATE.end))
             if (await processFactionUpdate(b.raw, settings)) loreSaved++;
 
+        if (featureOn('world_events'))
         for (const b of extractBlocks(text, UPDATE_BLOCKS.WORLD_EVENT_UPDATE.begin, UPDATE_BLOCKS.WORLD_EVENT_UPDATE.end))
             if (await applyWorldEventUpdate(b.raw, settings)) loreSaved++;
     }
@@ -238,10 +278,18 @@ async function onUserMessageRendered(messageId) {
     await handlePlayerSheetBlocks(message, messageId, settings);
 }
 
+/** Player may paste a player [ENTITY_BEGIN] block in their own message. */
 async function handlePlayerSheetBlocks(message, messageId, settings) {
-    const blocks = extractBlocks(message.mes, SHEET_BLOCKS.PLAYER_SHEET.begin, SHEET_BLOCKS.PLAYER_SHEET.end);
+    await loadSystemDefFromLorebook(settings);
+    const blocks = extractBlocks(message.mes, SHEET_BLOCKS.ENTITY.begin, SHEET_BLOCKS.ENTITY.end);
     if (!blocks.length) return;
-    for (const b of blocks) applyPlayerSheet(b.raw);
+    let applied = false;
+    for (const b of blocks) {
+        if (entityType(b.raw) !== 'player') continue;
+        await onEntityBegin(b.raw, settings);
+        applied = true;
+    }
+    if (!applied) return;
     await saveCharState(); refreshStatusPanel(); injectCharacterContext();
     if (settings.hideBlocks) {
         let c = message.mes;
@@ -251,7 +299,11 @@ async function handlePlayerSheetBlocks(message, messageId, settings) {
 }
 
 function onGenerationStarted() { injectCharacterContext(); }
-function onChatChanged()       { refreshStatusPanel(); injectCharacterContext(); }
+async function onChatChanged() {
+    await loadSystemDefFromLorebook(getSettings());
+    refreshStatusPanel();
+    injectCharacterContext();
+}
 
 // ── Settings UI ───────────────────────────────────────────────────────────────
 
@@ -288,6 +340,8 @@ async function renderSettingsPanel() {
       <label class="glp-row"><input type="checkbox" id="glp-show-rep"      ${settings.showRepPanel     ? 'checked' : ''}><span>Reputation panel</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-show-events"   ${settings.showEventsPanel  ? 'checked' : ''}><span>World events panel</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-show-currency" ${settings.showCurrencyPanel? 'checked' : ''}><span>Currency &amp; companions panel</span></label>
+      <label class="glp-row"><input type="checkbox" id="glp-show-boons"    ${settings.showBoonPanel    ? 'checked' : ''}><span>Abilities &amp; titles panel</span></label>
+      <label class="glp-row"><input type="checkbox" id="glp-show-needs"    ${settings.showNeedsPanel   ? 'checked' : ''}><span>Needs panel</span></label>
       <div class="glp-field-setting">
         <label for="glp-plot-lorebook">Plot Lorebook (optional)</label>
         <select id="glp-plot-lorebook" class="text_pole"><option value="">— auto (campaign-plot) —</option>${opts}</select>
@@ -305,7 +359,7 @@ async function renderSettingsPanel() {
         <div class="glp-field-setting"><label>Rule order</label><input  type="number" id="glp-rule-order"  class="text_pole" min="1" max="999" value="${settings.ruleOrder}"></div>
       </div>
       <div class="glp-info">
-        <b>v8 — modular build.</b> Modules: state · utils · lorebook · schema · skills · domain · lore · sheet · quests · reputation · events · currency · commands · panel · context<br>
+        <b>v9 — modular build.</b> Modules: state · utils · lorebook · system · schema · entity · skills · domain · lore · sheet · creation · quests · reputation · events · currency · abilities · needs · commands · panel · context<br>
         <b>Skill modes:</b> pp (multi-tier, configurable) · use_tracked (threshold counter)<br>
         <b>Add a block type:</b> edit modules/state.js (registry) + add handler in the appropriate module
       </div>
@@ -328,6 +382,8 @@ async function renderSettingsPanel() {
     $('#glp-show-rep').on('change', function()      { getSettings().showRepPanel      = this.checked; refreshStatusPanel(); save(); });
     $('#glp-show-events').on('change', function()   { getSettings().showEventsPanel   = this.checked; refreshStatusPanel(); save(); });
     $('#glp-show-currency').on('change', function() { getSettings().showCurrencyPanel = this.checked; refreshStatusPanel(); save(); });
+    $('#glp-show-boons').on('change',    function()  { getSettings().showBoonPanel    = this.checked; refreshStatusPanel(); save(); });
+    $('#glp-show-needs').on('change',    function()  { getSettings().showNeedsPanel   = this.checked; refreshStatusPanel(); save(); });
     $('#glp-plot-lorebook').on('change', function() { getSettings().plotLorebook      = this.value;   save(); });
     $('#glp-inject-ctx').on('change', function()    { getSettings().injectIntoContext = this.checked; injectCharacterContext(); save(); });
     $('#glp-ctx-depth').on('change', function()  { getSettings().contextDepth     = parseInt(this.value) || 1; injectCharacterContext(); save(); });

@@ -1,11 +1,69 @@
-# PLAYER_SHEET Block Reference
+# Entity / Player Stat-Block Reference
 
-The `PLAYER_SHEET` block defines your character AND how the status panel
-displays them. The schema section tells the extension what every field is,
-how to render it, and what the GM is allowed to update.
+In v9 the player sheet is just an **entity** of `type: player`. Use the
+`[ENTITY_BEGIN]` block (with `type: player`) — the `schema:` syntax below is
+**unchanged**, so every schema example in this file applies verbatim. NPCs,
+companions, and creatures use the same `schema:` syntax with a different `type:`.
 
-Paste a filled-in block into chat at the start of a campaign.
-The extension strips it from the visible chat automatically.
+```
+[ENTITY_BEGIN]
+type: player
+name: Mira Ashgate
+class: Rogue
+background: Former Guild Enforcer
+
+schema:
+  groups: vitals, attributes, status
+  field: hp
+    label: HP
+    type: bar
+    group: vitals
+    max_field: hp_max
+    mutability: gm_mutable
+  field: hp_max
+    label: HP Max
+    type: value
+    mutability: gm_event
+  field: fortitude
+    label: FOR
+    type: value
+    group: attributes
+    mutability: gm_event
+
+fortitude: 10
+hp: 18
+hp_max: 18
+[ENTITY_END]
+```
+
+The extension strips the block from the visible chat automatically and computes
+derived stats (HP/MP/… per the active system definition) for any schema field
+left unset.
+
+## Define the ruleset first — `[SYSTEM_DEF]`
+
+Before character creation, the GM emits a `[SYSTEM_DEF]` block that declares the
+attributes, derived-stat formulas, progression model, optional classes,
+reputation/skill/needs settings, and which subsystems are enabled. See the main
+`README.md` for the full System Definition reference. A minimal example:
+
+```
+[SYSTEM_DEF_BEGIN]
+name: My System
+attributes:
+  power | Power | POW
+  finesse | Finesse | FIN
+derived:
+  hp = (power*10) -> hp, hp_max
+progression:
+  levels: false
+  xp: false
+[SYSTEM_DEF_END]
+```
+
+> **Migration note:** Older examples below use the legacy `[PLAYER_SHEET_BEGIN] … [PLAYER_SHEET_END]`
+> tag. Substitute `[ENTITY_BEGIN]` + a `type: player` line (and `[ENTITY_END]`); everything
+> inside — the `schema:` block, field descriptors, mutability modes, and starting values — is identical.
 
 ---
 

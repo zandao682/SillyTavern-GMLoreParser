@@ -1,8 +1,9 @@
 /**
  * gm-lore-parser / modules/lore.js
- * Lorebook entry writers for all lore block types:
- * NPC (+ NPC_UPDATE, NPC_ATTR_CHANGE, NPC_MEMORY), Item (+ ITEM_UPDATE),
- * Bestiary, and generic lore (Location, Faction, Rule, Event).
+ * NPC lorebook storage internals (core/state/progression rebuild + memory) reused
+ * by the unified entity core, the Item handlers (+ ITEM_UPDATE), and generic lore
+ * (Location, Rule, Event). NPCs/creatures are authored via [ENTITY type:npc|creature];
+ * their update/event logic lives in modules/entity.js.
  */
 
 // ── NPC ───────────────────────────────────────────────────────────────────────
@@ -14,12 +15,12 @@ async function processNpcBlock(fields, settings) {
         ? fields.dynamic_fields.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
         : ['attitude', 'location', 'condition', 'relationship_to_party', 'notes'];
     const keys   = fields.keywords ? fields.keywords.split(',').map(k => k.trim()).filter(Boolean) : [name.toLowerCase()];
-    const schema = parseSchema(fields._raw || '');
+    const schema = fields._inherited_schema || parseSchema(fields._raw || '');
     const hasSchema = Object.keys(schema.fields).length > 0;
 
     // Core entry (immutable characteristics)
     const coreLines  = [`[NPC] ${name}`];
-    const skipInCore = new Set([...LORE_META, ...dynamicFields, 'schema', '_raw']);
+    const skipInCore = new Set([...LORE_META, ...dynamicFields, 'schema', '_raw', 'type', 'from_template']);
     const schemaKeys = new Set(Object.keys(schema.fields));
     for (const [k, v] of Object.entries(fields))
         if (!skipInCore.has(k) && !schemaKeys.has(k)) coreLines.push(`${k.replace(/_/g, ' ')}: ${v}`);
@@ -71,99 +72,11 @@ async function rebuildNpcProgressionEntry(name, schema, values, keys, settings) 
     });
 }
 
-async function processNpcUpdate(raw, settings) {
-    const fields = parseFields(raw);
-    const name   = fields.name;
-    if (!name) { console.warn(`[${MODULE_NAME}] NPC_UPDATE missing name`); return false; }
-
-    const { loadWorldInfo } = SillyTavern.getContext();
-    const worldData = await loadWorldInfo(settings.campaignLorebook);
-    if (!worldData?.entries) return false;
-
-    const coreEntry = Object.values(worldData.entries).find(e => e.comment === `[NPC] ${name}`);
-    if (!coreEntry) { console.warn(`[${MODULE_NAME}] NPC_UPDATE: no core for "${name}"`); return false; }
-
-    const dynamicFields = coreEntry.extensions?.dynamic_fields ?? ['attitude', 'location', 'condition', 'notes'];
-    const schema        = coreEntry.extensions?.npc_schema ?? { fields: {}, groups: [] };
-    const keys          = coreEntry.key;
-    const currentValues = parseNpcCurrentValues(worldData, name);
-    const changes = [], blocked = [];
-
-    for (const [key, val] of Object.entries(fields)) {
-        if (key === 'name') continue;
-        const desc = schema.fields[key];
-        const mut  = desc ? getMutability(desc) : null;
-        if (desc) {
-            if (mut === MUTABILITY.GM_MUTABLE)   { applyFieldValue(key, val, desc, currentValues); changes.push(key); }
-            else if (mut === MUTABILITY.USE_TRACKED) blocked.push(`${key}(use_tracked base)`);
-            else if (mut === MUTABILITY.GM_EVENT)    blocked.push(`${key}(gm_event)`);
-            else blocked.push(`${key}(immutable)`);
-        } else if (key.endsWith('_uses') && schema.fields[key.slice(0, -5)]) {
-            if (getMutability(schema.fields[key.slice(0, -5)]) === MUTABILITY.USE_TRACKED) {
-                const cur = parseInt(currentValues[key]) || 0;
-                currentValues[key] = val.startsWith('+') ? cur + parseInt(val) : (parseInt(val) || 0);
-                changes.push(key);
-            }
-        } else if (dynamicFields.includes(key)) {
-            currentValues[key] = val; changes.push(key);
-        } else {
-            blocked.push(`${key}(not in schema or dynamic_fields)`);
-        }
-    }
-    if (blocked.length) console.warn(`[${MODULE_NAME}] NPC_UPDATE blocked: ${blocked.join(', ')}`);
-    if (!changes.length) return false;
-
-    const promotions = checkPromotions(schema.fields, currentValues);
-    if (promotions.length) {
-        for (const p of promotions)
-            await processNpcMemoryDirect(name, 'episodic',
-                `Skill gain: ${schema.fields[p.key]?.label || p.key}`, `${p.reason}.`,
-                [name.toLowerCase(), 'skill gain'], settings);
-    }
-    await rebuildNpcStateEntry(name, dynamicFields, currentValues, schema, keys, settings);
-    if (Object.keys(schema.fields).length > 0)
-        await rebuildNpcProgressionEntry(name, schema, currentValues, keys, settings);
-    return { changed: changes.length > 0, promotions };
-}
-
-async function processNpcAttrChange(raw, settings) {
-    const fields = parseFields(raw);
-    const name   = fields.name;
-    const reason = fields.reason;
-    if (!name || !reason) return false;
-
-    const { loadWorldInfo } = SillyTavern.getContext();
-    const worldData = await loadWorldInfo(settings.campaignLorebook);
-    if (!worldData?.entries) return false;
-
-    const coreEntry = Object.values(worldData.entries).find(e => e.comment === `[NPC] ${name}`);
-    if (!coreEntry?.extensions?.npc_schema) return false;
-
-    const schema        = coreEntry.extensions.npc_schema;
-    const keys          = coreEntry.key;
-    const dynamicFields = coreEntry.extensions?.dynamic_fields ?? [];
-    const currentValues = parseNpcCurrentValues(worldData, name);
-    const changes = [], blocked = [];
-
-    for (const [key, val] of Object.entries(fields)) {
-        if (key === 'name' || key === 'reason') continue;
-        const desc = schema.fields[key];
-        const mut  = desc ? getMutability(desc) : null;
-        if (mut !== MUTABILITY.GM_EVENT) { blocked.push(`${key}(${mut || 'unknown'})`); continue; }
-        const oldVal = currentValues[key];
-        applyFieldValue(key, val, desc, currentValues);
-        changes.push({ key, oldVal, newVal: currentValues[key] });
-    }
-    if (blocked.length) console.warn(`[${MODULE_NAME}] NPC_ATTR_CHANGE blocked: ${blocked.join(', ')}`);
-    if (!changes.length) return false;
-
-    const summary = changes.map(c => `${schema.fields[c.key]?.label || c.key}: ${c.oldVal}→${c.newVal}`).join(', ');
-    await processNpcMemoryDirect(name, 'episodic', `Milestone: ${reason}`, `${reason}. Changes: ${summary}.`,
-        [name.toLowerCase(), 'milestone'], settings);
-    await rebuildNpcStateEntry(name, dynamicFields, currentValues, schema, keys, settings);
-    await rebuildNpcProgressionEntry(name, schema, currentValues, keys, settings);
-    return { changes, reason };
-}
+// NPC update/event logic now lives in the unified entity core (modules/entity.js):
+// npcEntityUpdate / npcEntityEvent build a lorebook handle and call the shared
+// entityApplyUpdate / entityApplyEvent ops, then commit via the rebuild helpers
+// below. processNpcBlock (above) and the rebuild/parse helpers remain here as the
+// NPC storage internals those wrappers reuse.
 
 async function processNpcMemory(raw, settings) {
     const fields  = parseFields(raw);
@@ -221,8 +134,9 @@ function parseNpcCurrentValues(worldData, npcName) {
 
 function itemConditionLabel(dur, durMax) {
     if (!durMax || durMax <= 0) return null;
-    const pct = (dur / durMax) * 100;
-    return (ITEM_CONDITIONS.find(c => pct >= c.min) || ITEM_CONDITIONS.at(-1)).label;
+    const pct   = (dur / durMax) * 100;
+    const conds = getItemConditions();
+    return (conds.find(c => pct >= c.min) || conds.at(-1)).label;
 }
 
 async function processItemBlock(fields, settings) {
@@ -278,25 +192,8 @@ async function processItemUpdate(raw, settings) {
     return true;
 }
 
-// ── Bestiary ──────────────────────────────────────────────────────────────────
-
-async function processBestiaryBlock(fields, settings) {
-    const name = fields.name || `Creature ${Date.now()}`;
-    const keys = fields.keywords ? fields.keywords.split(',').map(k => k.trim()).filter(Boolean) : [name.toLowerCase()];
-    const coreLines = [`[Bestiary] ${name}`], scalingLines = [];
-    for (const [k, v] of Object.entries(fields)) {
-        if (LORE_META.has(k)) continue;
-        if (k.endsWith('_per_level'))
-            scalingLines.push(`  ${k.replace(/_per_level$/, '').replace(/_/g, ' ')} +${v} per level`);
-        else
-            coreLines.push(`${k.replace(/_/g, ' ')}: ${v}${/^\d+\s*(?:-|to)\s*\d+$/.test(String(v).trim()) ? ' (range)' : ''}`);
-    }
-    if (scalingLines.length) { coreLines.push('Scaling:'); coreLines.push(...scalingLines); }
-    coreLines.push('[Immutable — never rewrite this entry for the same creature]');
-    return upsertEntry(settings.campaignLorebook, {
-        ...entryBase(`[Bestiary] ${name}`, keys, coreLines.join('\n'), settings.loreOrder, settings, { type: 'BESTIARY', immutable: true }),
-    });
-}
+// Bestiary entries are now "creature" entities (modules/entity.js creatureEntityBegin),
+// stored as immutable templates that NPC/creature instances can inherit via from_template.
 
 // ── Generic lore (Location, Faction, Rule, Event) ────────────────────────────
 

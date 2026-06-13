@@ -1,30 +1,34 @@
 # GM Lore Parser
 
-A SillyTavern extension that automates campaign record-keeping for AI-run tabletop RPG games. The GM outputs structured blocks; the extension reads them and maintains lorebooks, character state, NPC progression, and world time automatically.
+A SillyTavern extension that automates campaign record-keeping for AI-run tabletop RPGs. The GM (or the Architect that designs a game) emits structured blocks at the end of messages; the extension parses them and maintains the ruleset, character/NPC/companion state, lorebooks, abilities, world time, and more — automatically.
 
-**Version:** 6.0.0  
+**Version:** 9.0.0
 **Requires:** SillyTavern 1.12.0+
 
 ---
 
-## What it does
+## What's new in v9
 
-**Lore pipeline** — The GM appends structured blocks to messages. The extension parses them and writes keyword-triggered lorebook entries to a campaign-specific lorebook. Entries are created on first appearance and updated in place on subsequent appearances.
+v9 is a system-agnostic rebuild. Nothing about any one game is hardcoded:
 
-**Character sheet** — Player character state (stats, conditions, inventory, resources) is stored per-chat and displayed as a live status panel above the chat input. The same state is injected into the model's context before each generation. The GM can update mutable fields; protected fields are enforced at the code level regardless of what the model outputs.
-
-**NPC progression** — Significant NPCs carry full field schemas, mirroring the player character system. They have their own HP, skills, and attributes that can grow through use or milestone events. Time-based regen applies to NPCs automatically on WORLD_TIME blocks.
-
-**World time** — A WORLD_TIME block advances the in-world clock, applies resource regen to both the player and all significant NPCs, and checks use-tracked skill promotion thresholds. The GM does not calculate recovery manually.
+- **System Definition** — a single `[SYSTEM_DEF]` block defines the ruleset: which subsystems exist, the attribute list, derived-stat formulas, progression model, optional classes, reputation scale/tiers, skill model, rank ladder, needs, item conditions, and loyalty. It is stored in the campaign lorebook and drives every other module. With no definition present, sensible defaults apply.
+- **Unified entities** — Player, NPC, Companion, and Creature share **one** stat-block engine. A single `[ENTITY]` family of blocks (with a `type:` field) replaces the old per-type blocks; the type drives the follow-on behavior (NPC memory lorebooks, companion loyalty/AP, player change-log, immutable creature templates).
+- **Unified abilities** — Boons, Titles, innate/racial Passives, and Evolution traits are now one `[ABILITY]` concept with a `category:`.
+- **Optional everything** — Levels, XP, classes, AP, leveled skills, reputation, needs, and the other subsystems are all opt-in. A classless, levelless, skill-based system is fully supported.
 
 ---
 
-## Companion cards
+## Module architecture
 
-| Card | Purpose |
-|---|---|
-| **The Game Master** | Runs campaigns. Knows the full block protocol. Manages NPC growth. |
-| **The Architect** | Designs new game systems. Produces importable GM cards and lorebooks. |
+The extension is a single entry point (`index.js`) that loads `modules/` in order:
+
+```
+state · utils · lorebook · system · schema · entity · skills · domain ·
+lore · sheet · creation · quests · reputation · events · currency ·
+abilities · needs · commands · panel · context
+```
+
+To add a block type: register its tags in `modules/state.js`, write a handler in the relevant module, and dispatch it in `index.js` `onMessageReceived`.
 
 ---
 
@@ -40,458 +44,278 @@ Restart SillyTavern. Settings appear under **Extensions → GM Lore Parser**.
 
 ## Campaign setup
 
-1. Create a dedicated lorebook in **World Info** (e.g. `campaign-ironveil`)
-2. Link it to the GM card (Character panel → globe icon) **and** to the active chat
-3. In extension settings, select it as **Campaign Lorebook**
-4. At session start, paste a filled `[PLAYER_SHEET_BEGIN]` block into chat
+1. Create a dedicated lorebook in **World Info** (e.g. `campaign-ironveil`).
+2. Link it to the GM card and to the active chat, and select it as **Campaign Lorebook** in extension settings.
+3. At the start of a campaign, the GM emits a `[SYSTEM_DEF]` block (written to the campaign lorebook as a constant `[System Definition]` entry).
+4. Begin character creation in-chat (the GM emits `[CHAR_CREATE_BEGIN]` … `[CHAR_CREATE_FINALIZE]`), or provide a player `[ENTITY type:player]` block directly.
+
+The system definition is cached per chat and re-hydrated from the lorebook on chat load, so it is portable and survives reloads.
 
 ---
 
-## Block reference
+## The System Definition
 
-All blocks are emitted by the GM at the **end** of messages — never mid-narration. The extension strips them from the visible chat after processing (configurable).
+```
+[SYSTEM_DEF_BEGIN]
+name: Veridia
+
+features: skills, ranks, reputation, currency, needs, companions, domains, quests, abilities, world_events
+
+identity:
+  class | Class
+  background | Background
+
+progression:
+  levels: true
+  level_field: level
+  level_start: 1
+  xp: true
+  xp_field: xp
+  leveling: xp           # xp | milestone | none
+
+creation:
+  method: point_buy      # point_buy | array | freeform
+  ap_pool: 100
+
+classes:
+  enabled: true
+  option: Spellblade | class
+    description: A warrior-mage hybrid
+    attribute_mods: intellect:+5, might:+2
+    grants_skills: Swordsmanship, Arcane Theory
+    grants_abilities: Mana Font
+
+attributes:
+  fortitude | Fortitude | FOR
+  might | Might | MGT
+  intellect | Intellect | INT
+  resolve | Resolve | RES
+  agility | Agility | AGI
+
+derived:
+  hp = (fortitude*5)+(might*2)+(level*10) -> hp, hp_max
+  mp = (intellect*3)+(resolve*3)+(level*5) -> mp, mp_max
+  vigor = (might*3)+(agility*3)+(level*5) -> vigor, vigor_max
+
+variables:
+  level | 1
+
+reputation:
+  scale: 0-100
+  initial: 50
+  tiers: Hostile, Cold, Neutral, Friendly, Allied, Sworn
+
+skills:
+  enabled: true
+  leveled: true
+  tiers: Novice, Apprentice, Adept, Expert, Master, Grandmaster, Saint, God
+  levels_per_tier: 10
+  pp_per_level: 100 * tier_rank
+  score: 10 + total_levels * 2.5
+
+rank_ladder: F, E, D, C, B, A, S, SS, SSS
+
+needs:
+  warn: 30
+  critical: 10
+
+item_conditions:
+  Pristine: 90
+  Good: 70
+  Worn: 50
+  Damaged: 25
+  Broken: 0
+
+loyalty:
+  scale: 0-100
+  initial: 50
+[SYSTEM_DEF_END]
+```
+
+**Every section is optional** and merges over the built-in defaults:
+
+- `features:` — a comma list of the **enabled** subsystems. Anything omitted is disabled: its blocks no-op, its panel section hides, its context injection is suppressed, and its `#commands` report nothing. Omit the whole section to keep all features on.
+- `progression:` — `levels:false`/`xp:false` produce a levelless / XP-less system. `level` is exposed to formulas only when `levels:true`.
+- `identity:` — declared identity fields beyond the always-present `name` (e.g. class/background/race). A classless system simply omits `class`.
+- `classes:` — an optional catalogue. Each `option:` is a build template (attribute modifiers + granted skills/abilities). The same shape, via `category`, can hold races/backgrounds/origins. Selecting one during creation applies its modifiers and grants.
+- `attributes:` / `derived:` — `key | label | abbr` rows and `key = formula -> target[, also…]` rows. Formulas may reference any attribute (by key or abbr) and declared `variables`, and are evaluated with a strict arithmetic-only whitelist (no code execution).
+- `reputation:` / `loyalty:` — custom `scale: min-max`, `initial`, and tier names.
+- `skills:` — `enabled`/`leveled` toggles, tier names, `levels_per_tier`, and the `pp_per_level` / `score` formulas.
+- `needs:`, `item_conditions:`, `rank_ladder:` — life-sim thresholds, durability bands, and the rank progression.
+
+Item-box, instances/dungeons, and death/resurrection are intentionally **not** tracked subsystems — they are GM narrative (item storage uses the `inventory` list, instances use `WORLD_EVENT`, death is HP→0 prose).
 
 ---
 
-### Lore blocks → campaign lorebook
+## Entities — one engine for player / NPC / companion / creature
 
-#### NPC
+All stat-bearing actors share the schema engine. The block `type:` selects storage and follow-on rules.
 
-Significant NPCs include a `schema:` section defining field types and mutability. Minor NPCs omit the schema. The extension writes up to three lorebook entries per significant NPC:
-
-- `[NPC] Name` — static core (immutable fields)
-- `[NPC:State] Name` — dynamic state + mutable stat values (rebuilt on each NPC_UPDATE)
-- `[NPC:Progression] Name` — compact summary of all schema field values (rebuilt on NPC_UPDATE and WORLD_TIME)
-
-All three share the NPC's keywords and inject together when the NPC is mentioned.
+### `[ENTITY_BEGIN]` — define an entity
 
 ```
-[NPC_BEGIN]
-name: Aldric Holt
-race: Human
-role: Freelance sword-for-hire
-appearance: Mid-thirties, square jaw, greying temples
-origin: Former city guard, dishonourably discharged
-defining_trait: Pragmatic loyalty
-dynamic_fields: attitude, location, condition, relationship_to_party, notes
-
-schema:
-  groups: vitals, combat, skills, progression
-  field: hp
-    label: HP
-    type: bar
-    group: vitals
-    max_field: hp_max
-    color: #c07060
-    mutability: gm_mutable
-    regen_rate: 2
-    regen_unit: hour
-    regen_condition: resting
-  field: hp_max
-    label: HP Max
-    type: value
-    group: vitals
-    mutability: gm_event
-  field: blade
-    label: Blade
-    type: value
-    group: skills
-    mutability: use_tracked
-    uses_threshold: 6
-    uses_gain: 1
-  field: blade_uses
-    label: Blade Uses
-    type: value
-    group: skills
-    mutability: gm_mutable
-  field: level
-    label: Level
-    type: value
-    group: progression
-    mutability: gm_event
-  field: xp
-    label: XP
-    type: value
-    group: progression
-    mutability: gm_mutable
-
-attitude: Wary
-location: The Broken Lantern, Millhaven
-condition: Healthy
-relationship_to_party: Strangers
-
-hp: 24
-hp_max: 24
-blade: 4
-blade_uses: 0
-level: 2
-xp: 0
-
-keywords: Aldric, Aldric Holt, sword-for-hire
-[NPC_END]
-```
-
-#### NPC_UPDATE — routine NPC changes
-
-Updates `dynamic_fields` (attitude, location, etc.) and `gm_mutable` schema fields (hp, xp). Also accepts `{skill}_uses` counters for use_tracked fields. Rejects gm_event and immutable fields with a console warning.
-
-After every update, the extension checks whether any use_tracked skill has hit its `uses_threshold`. If so it auto-promotes the attribute, resets the counter (carrying any remainder), fires a toast notification, and writes an episodic NPC memory.
-
-```
-[NPC_UPDATE_BEGIN]
-name: Aldric Holt
-hp: 18
-attitude: Cautiously positive
-relationship_to_party: Allies of convenience
-blade_uses: +3
-xp: 150
-[NPC_UPDATE_END]
-```
-
-#### NPC_ATTR_CHANGE — milestone attribute changes
-
-Only writes `gm_event` fields. Requires a `reason` field — the entire block is rejected if reason is absent. Every accepted change is logged to the NPC's memory lorebook automatically as an episodic memory.
-
-```
-[NPC_ATTR_CHANGE_BEGIN]
-name: Aldric Holt
-reason: Survived the Siege of Millhaven — veteran's growth
-str: 15
-hp_max: 28
-level: 3
-[NPC_ATTR_CHANGE_END]
-```
-
-#### NPC_MEMORY — NPC memory lorebook entries
-
-Creates entries in a per-NPC lorebook (`npc-{slug}`). The lorebook is created automatically if it doesn't exist and linked to the current chat immediately.
-
-`type: core` — constant entry (always injected when NPC is active). Use for defining secrets, core motivations, fundamental truths about the character.
-
-`type: episodic` — keyword-triggered entry (order 50). Use for specific past events, promises, debts, relationships that should surface when contextually relevant.
-
-```
-[NPC_MEMORY_BEGIN]
-npc: Aldric Holt
-type: core
-title: Why Aldric left the guard
-content: Aldric was ordered to cut down unarmed protesters during the Millhaven grain riots. He refused, disarmed the officer who gave the order, and walked out. He has never spoken of it but it defines every decision he makes about authority.
-[NPC_MEMORY_END]
-```
-
-```
-[NPC_MEMORY_BEGIN]
-npc: Aldric Holt
-type: episodic
-title: Warned the party about the ambush
-content: On Night 4, Aldric quietly warned the party about a Thornfield Guild ambush waiting outside the inn, at significant personal risk. He asked for nothing but clearly expects it to be remembered.
-keywords: ambush warning, Thornfield, night four, Aldric warning, inn warning
-[NPC_MEMORY_END]
-```
-
-#### LOCATION
-
-```
-[LOCATION_BEGIN]
-name: The Ashveil Ruins
-region: Northern Reach
-description: Collapsed mage tower, three floors accessible, two submerged
-notable_features: Echo-wraith hauntings at night, sealed vault on B2
-danger_level: High
-current_state: Partially explored by party (Session 4)
-keywords: Ashveil, Ashveil Ruins, ruins, Northern Reach, mage tower
-[LOCATION_END]
-```
-
-#### FACTION
-
-```
-[FACTION_BEGIN]
-name: Thornfield Guild
-type: Criminal trade organisation
-goals: Control river commerce from Millhaven to the coast
-leadership: Guildmaster Vex Anora (identity unknown to most)
-resources: Bribes, smuggled alchemicals, two patrol ships
-attitude_to_party: Hostile — party disrupted operations
-keywords: Thornfield, Thornfield Guild, guild, smugglers
-[FACTION_END]
-```
-
-#### ITEM
-
-Declare `mutable_fields` for anything that degrades or is consumed. The extension derives a condition label (Pristine / Good / Worn / Damaged / Broken) automatically from durability percentage when `durability` and `durability_max` are both present.
-
-```
-[ITEM_BEGIN]
-name: The Silthorn Compass
-type: Magical navigation device
-properties: Points to nearest active gate rather than magnetic north
-history: Stolen from the Archivist of Vel-Doran
-current_holder: Party (Mira's pack)
-durability: 85
-durability_max: 100
-charges: 12
-charges_max: 20
-mutable_fields: durability, charges, current_holder
-keywords: Silthorn Compass, compass, gate compass
-[ITEM_END]
-```
-
-#### ITEM_UPDATE
-
-Only updates fields listed in `mutable_fields`. Condition label recalculates automatically if durability changes.
-
-```
-[ITEM_UPDATE_BEGIN]
-name: The Silthorn Compass
-durability: 62
-charges: 8
-[ITEM_UPDATE_END]
-```
-
-#### BESTIARY
-
-Completely immutable once written — never re-emit for the same creature type. Use range syntax for variable stats. Use `_per_level` suffix for scaling values; these appear under a `[Scaling]` section in the lorebook entry.
-
-```
-[BESTIARY_BEGIN]
-name: Echo-Wraith
-type: Undead spirit
-hp: 18-28
-armour: 0
-attack_bonus: 3-5
-damage: 1d6+2
-special: Incorporeal (non-magical weapons half damage); Echo Scream (DC 14 WIS or frightened)
-weakness: Radiant damage; sustained loud noise
-hp_per_level: 6
-attack_bonus_per_level: 1
-keywords: Echo-Wraith, wraith, Ashveil undead
-[BESTIARY_END]
-```
-
-#### RULE
-
-`trigger_keywords` must be specific — they should only fire when that mechanic is mechanically relevant. Avoid generic triggers like `combat` or `action`.
-
-```
-[RULE_BEGIN]
-name: Initiative
-trigger_keywords: initiative, who goes first, turn order, combat starts, surprised
-content: Roll 1d20 + DEX modifier. Highest total acts first. Ties broken by DEX. Surprised creatures lose their first turn and cannot react.
-[RULE_END]
-```
-
-#### EVENT
-
-```
-[EVENT_BEGIN]
-name: The Burning of Aldgate Bridge
-date_in_world: Night 4, Month of Embers, Year 412
-participants: Party, Harrow Company, unknown arsonist
-summary: Bridge destroyed to slow Harrow pursuit. Three soldiers drowned.
-consequences: Harrow Company now actively hostile. Millhaven guard questioning locals.
-keywords: Aldgate Bridge, bridge burning, Harrow pursuit, Month of Embers
-[EVENT_END]
-```
-
----
-
-### Character sheet blocks
-
-#### PLAYER_SHEET — player-authored, set once
-
-Defines character identity AND the display schema for the status panel. The schema section (indented under `schema:`) describes every field — its display type, panel group, mutability mode, and regen rules. The values section (flat key: value lines) provides starting numbers.
-
-```
-[PLAYER_SHEET_BEGIN]
+[ENTITY_BEGIN]
+type: player              # player | npc | companion | creature
 name: Mira Ashgate
 class: Rogue
 background: Former Guild Enforcer
 
 schema:
-  groups: vitals, attributes, resources, status
+  groups: vitals, attributes, status
   field: hp
     label: HP
     type: bar
     group: vitals
     max_field: hp_max
-    color: #7ec87e
     mutability: gm_mutable
-    regen_rate: 0
-    regen_unit: hour
-    regen_condition: never
   field: hp_max
     label: HP Max
     type: value
-    group: vitals
     mutability: gm_event
-  field: dex
-    label: DEX
+  field: fortitude
+    label: FOR
     type: value
     group: attributes
     mutability: gm_event
   field: blade
     label: Blade
     type: value
-    group: resources
     mutability: use_tracked
     uses_threshold: 5
-    uses_gain: 1
-  field: blade_uses
-    label: Blade Uses
-    type: value
-    group: resources
-    mutability: gm_mutable
-  field: conditions
-    label: Conditions
-    type: list
-    group: status
-    mutability: gm_mutable
-  field: inventory
-    label: Inventory
-    type: list
-    group: status
-    mutability: gm_mutable
 
-hp: 18
-hp_max: 18
-dex: 16
-blade: 3
-blade_uses: 0
-conditions:
-inventory: Shortsword; Lockpicks; Hooded cloak; 12 gold
-[PLAYER_SHEET_END]
+fortitude: 10
+might: 8
+level: 1
+blade: 0
+[ENTITY_END]
 ```
 
-See `player-sheet-examples.md` for complete examples covering survival horror, anime action, level-up systems, and levelless use-tracked systems.
+The `schema:` section defines every field — display type, panel group, mutability, regen, use-tracking. Flat `key: value` lines after it provide starting values. Derived stats (HP/MP/… per the system definition) are computed automatically for any target field present in the schema that isn't already set.
 
-#### Field mutability modes
+**Per-type follow-on behavior**
+- **player** — stored in chat metadata; shown in the status panel and injected into context. No lorebook entry.
+- **npc** — written to the campaign lorebook as three entries: `[NPC] name` (immutable core), `[NPC:State] name` (dynamic + gm_mutable fields), `[NPC:Progression] name` (full stat summary). Gains a per-NPC memory lorebook when it earns memories or milestones.
+- **companion** — stored in chat metadata with companion meta (loyalty / control cost / role / rank / AP) plus an optional shared stat block; summarized to one lorebook entry.
+- **creature** — an **immutable template** (a bestiary entry). Supports stat ranges (`hp: 18-28`) and `_per_level` scaling. NPC/creature instances can inherit a template with `from_template: <name>` (ranges collapse to midpoint, scaling applies for the instance's level).
 
-| Mode | Schema key | Writable via | Use for |
-|---|---|---|---|
-| `immutable` | `mutability: immutable` | Nothing after PLAYER_SHEET | Race, species, fixed origin |
-| `gm_mutable` | `mutability: gm_mutable` | PLAYER_UPDATE | HP, conditions, inventory, pools, XP |
-| `gm_event` | `mutability: gm_event` | ATTR_CHANGE (requires reason) | Base attributes, HP_max, level |
-| `use_tracked` | `mutability: use_tracked` | Auto-promotes when `{key}_uses` hits threshold | Skills that grow through practice |
-
-Name, class, background, and the schema itself are always protected regardless of any setting.
-
-#### PLAYER_UPDATE — GM routine updates
-
-Only writes `gm_mutable` fields. Rejects `gm_event`, `immutable`, and `use_tracked` base fields with a console warning.
-
-`+`/`-` prefix adds or removes from list fields (conditions, inventory). No prefix replaces the list. Numeric fields are always full replacement — the GM calculates the new total.
+### `[ENTITY_UPDATE_BEGIN]` — routine (GM_MUTABLE) changes
 
 ```
-[PLAYER_UPDATE_BEGIN]
+[ENTITY_UPDATE_BEGIN]
+type: player
 hp: 11
 conditions: +Poisoned, -Stunned
-inventory: -Lockpicks; +Iron key (cell block B)
-xp: 350
-[PLAYER_UPDATE_END]
+blade_uses: +3
+[ENTITY_UPDATE_END]
 ```
 
-#### ATTR_CHANGE — deliberate attribute changes
+Writes only `gm_mutable` fields (and, for NPCs, declared dynamic fields). `+`/`-` add/remove list items; numeric fields are full replacement. Use-tracked skills auto-promote when their `_uses` counter crosses the threshold. For companions, this block also carries meta and AP: `loyalty`, `control_cost`, `role`, `status`, `ap_award: N`, `attribute_allocate: might:5, agility:3`.
 
-Only writes `gm_event` fields. Requires `reason` — the entire block is rejected without it. Every change is logged to `attr_change_log` in chatMetadata with timestamp and reason.
-
-```
-[ATTR_CHANGE_BEGIN]
-reason: Level 3 — Rogue attribute bonus
-dex: 18
-hp_max: 22
-[ATTR_CHANGE_END]
-```
-
-#### WORLD_TIME — in-world clock advancement
-
-Emitted by the GM after any scene-level time passage. Not for round-by-round combat — only meaningful scene transitions.
-
-On receipt, the extension:
-1. Updates the displayed world time
-2. Applies regen to all `gm_mutable` player fields with regen rules
-3. Applies regen to all significant NPCs with schemas that have regen fields
-4. Checks use_tracked promotion thresholds for both player and NPCs
-5. Auto-writes NPC memory entries for any promotions that fire
-6. Rebuilds affected NPC State and Progression lorebook entries
-
-The GM does not calculate any recovery manually.
+### `[ENTITY_EVENT_BEGIN]` — milestone (GM_EVENT) changes
 
 ```
-[WORLD_TIME_BEGIN]
-datetime: Day 12, Morning, Month of Embers
-elapsed: 8h
-resting: true
-[WORLD_TIME_END]
+[ENTITY_EVENT_BEGIN]
+type: player
+reason: Level 3 — attribute growth
+fortitude: 12
+hp_max: 30
+[ENTITY_EVENT_END]
 ```
 
-**elapsed formats accepted:** `2h 30m` · `1 day` · `3 days` · `45 minutes` · `90m` · `1 day 4h`
+Writes only `gm_event` fields and **requires** a `reason` (the block is rejected without one). Player changes are logged to `attr_change_log`; NPC changes are written as an episodic memory.
 
-**resting: true** triggers fields with `regen_condition: resting`. Fields with `regen_condition: always` regen regardless. Negative `regen_rate` values deplete over time (hunger, thirst, fatigue).
-
-#### CARD_OUTPUT — System Designer only
-
-Emitted by The Architect card at Stage 9. The extension auto-downloads it as a `.json` file ready to import into SillyTavern.
+### `[ENTITY_MEMORY_BEGIN]` — memory lorebook entry
 
 ```
-[CARD_OUTPUT_BEGIN]
-{ ... complete GM card JSON ... }
-[CARD_OUTPUT_END]
+[ENTITY_MEMORY_BEGIN]
+type: npc
+name: Aldric Holt
+memory_type: core            # core (constant) | episodic (keyword-triggered)
+title: Why Aldric left the guard
+content: He refused an order to cut down protesters and walked out.
+keywords: guard, protesters
+[ENTITY_MEMORY_END]
 ```
+
+### Field mutability
+
+| Mode | Writable via | Use for |
+|---|---|---|
+| `immutable` | nothing after creation | race, fixed origin |
+| `gm_mutable` | `[ENTITY_UPDATE]` | HP, conditions, inventory, pools, XP |
+| `gm_event` | `[ENTITY_EVENT]` (requires reason) | base attributes, HP max, level |
+| `use_tracked` | auto-promotes when `{field}_uses` hits the threshold | skills that grow through practice |
+
+`name` and the schema itself are always protected.
+
+---
+
+## Abilities — boons, titles, passives, traits, evolution
+
+```
+[ABILITY_BEGIN]
+name: Ember Heart
+category: boon              # boon | title | passive | trait | evolution
+activation: on_use         # always | on_condition | on_use
+description: Ignite your blade with divine fire
+effects: +2 fire damage on hit
+entity: <owner name>       # optional; defaults to the player
+keywords: ember, fire blade
+[ABILITY_END]
+```
+
+- **title** — set `active: true` to display it; only one title is active per owner at a time.
+- **evolution** — `stat_changes: might:+5, resolve:+3` are applied to the owner as a logged milestone event (gm_event semantics).
+- Racial/innate `passive` abilities are emitted during character creation in place of a free-text passives list.
+
+---
+
+## Other blocks (gated by `features`)
+
+- **Skills** — `[SKILL_SYSTEM]` configures the model; `[SKILL_UPDATE]` awards PP and advances tiers. Tier names / formulas come from the system definition unless overridden here.
+- **Reputation & factions** — `[FACTION_BEGIN]` / `[FACTION_UPDATE]` define lore; `[REPUTATION_UPDATE]` changes standing on the system's scale/tiers. Both feed one combined lorebook entry per faction.
+- **Quests** — `[QUEST_BEGIN]` / `[QUEST_UPDATE]`.
+- **World** — `[WORLD_EVENT]` / `[WORLD_EVENT_UPDATE]` / `[PLOT_ENTRY]`.
+- **Domain** — `[DOMAIN_UPDATE]` for a domain/base management sub-game.
+- **Currency & ranks** — `[CURRENCY_UPDATE]`, `[RANK_CHANGE]`, `[XP_AWARD]`.
+- **Needs / life-sim** — `[NEEDS_SYSTEM]` configures meters; `[NEEDS_UPDATE]` changes them (context injection only fires when a need is at/under its warn threshold). Needs can also be modeled as schema fields with negative `regen_rate`.
+- **World time** — `[WORLD_TIME]` advances the clock and applies resource regen + use-tracked checks to the player and all schema-bearing NPCs.
+- **Item** — `[ITEM_BEGIN]` / `[ITEM_UPDATE]`; condition labels derive from the system's `item_conditions`.
+- **Lore** — `[LOCATION_BEGIN]`, `[RULE_BEGIN]`, `[EVENT_BEGIN]`.
+- **Designer** — `[CARD_OUTPUT]` (Architect only) downloads a generated GM card as JSON.
+
+---
+
+## Commands
+
+Typed by the player; answered locally without calling the model.
+
+| Command | Shows |
+|---|---|
+| `#status` / `#character` | Full character sheet |
+| `#vitals` | HP/MP/resources with regen rates |
+| `#skills` | Skill list with tiers and PP |
+| `#inventory` / `#bag` | Inventory list |
+| `#domain` | Domain statistics |
+| `#time` | Current in-world time |
+| `#quests` | Quest tracker |
+| `#rep` / `#reputation` | Faction reputation standings |
+| `#factions` | Full faction roster with lore |
+| `#events` | World events log |
+| `#currency` / `#gold` | Wallet and denominations |
+| `#rank` | Guild / adventurer rank |
+| `#companions [name]` | Companion roster (optional filter) |
+| `#legion` / `#hierarchy` | Full command delegation tree |
+| `#boons` / `#titles` / `#abilities` | Abilities by category |
+| `#needs` | Life-simulation meters |
+| `#inspect [target]` | Inspect a target by Awareness tier |
+| `#help` | Command list |
 
 ---
 
 ## Status panel
 
-A live character panel renders above the chat input whenever a character sheet is loaded. Layout is fully schema-driven — the panel renders whatever groups and fields the schema defines.
-
-**Field renderers:**
-
-| type | Renders as |
-|---|---|
-| `bar` | Fill bar with current/max label. Colour-codes at ≤50% (warning) and ≤25% (pulsing critical). |
-| `value` | Attribute chip. `★` badge on `gm_event` fields. Use-tracked fields show `N/threshold↑` progress. |
-| `pool` | Row of pip dots, filled/empty. |
-| `list` | Pill badges for conditions; dot-separated text for inventory. |
-| `text` | Inline label + value (used for world time display). |
-
-The same state is injected into the model's context via `setExtensionPrompt` (Author's Note position) before each generation, in a compact multi-line format the model can read efficiently.
-
----
-
-## NPC memory lorebooks
-
-When the first `NPC_MEMORY` block arrives for an NPC, the extension:
-1. Creates `npc-{slug}` lorebook if it doesn't exist
-2. Links it to the current chat automatically
-3. Writes the memory as a lorebook entry
-
-Core memories (order 1, constant) are always injected when that NPC is in scene. Episodic memories (order 50, keyword-triggered) only surface when their keywords appear in recent messages. This keeps token cost bounded — an NPC with 20 memories doesn't inject them all on every mention.
-
-Use-tracked promotions and NPC_ATTR_CHANGE events are automatically logged as episodic memories, so NPC growth has a retrievable history.
-
----
-
-## The Architect card
-
-Guides you through designing a complete RPG system across nine stages:
-
-1. **Tone & Premise** — genre, power scaling, constraints
-2. **Core Resolution** — dice type, difficulty, crits
-3. **Character Creation** — attributes, secondary stats, skills
-4. **3.5 — Player Schema** — every field: type, mutability, regen
-5. **Advancement** — what triggers it, what improves, which mutability mode
-6. **NPC Schema Design** — which NPCs get schemas, what fields, what mutability
-7. **Combat & Conflict** — initiative, damage, conditions, death
-8. **GM Guidance** — encounter calibration, pacing, WORLD_TIME triggers
-9. **Review & Output** — confirm then produce all files
-
-**Stage 9 output:**
-- CARD_OUTPUT block → auto-downloaded GM card JSON
-- LOREBOOK_OUTPUT block → shown as code, imported manually via World Info → Import
-- Player Sheet template → code block, player fills in and pastes at session start
-
-**When using The Architect:** set Campaign Lorebook to blank in extension settings. The Architect produces its own output and does not write to a campaign lorebook.
+A live, schema-driven panel renders above the chat input: identity + active title, grouped fields (bars/values/pools/lists), and collapsible sections for needs, skills, domains, quests, reputation, world events, currency & companions, and abilities & titles. During an active creation session it shows the creation step checklist instead. Disabled features and empty sections are hidden.
 
 ---
 
@@ -499,11 +323,9 @@ Guides you through designing a complete RPG system across nine stages:
 
 | Lorebook | Created by | Contains |
 |---|---|---|
-| GM card embedded book | Card author (or Architect) | Block protocol reminder (constant), 10-15 system rules (keyword-triggered) |
-| Campaign lorebook | gm-lore-parser extension | NPC core/state/progression, locations, factions, items, bestiary, rules, events |
-| `npc-{slug}` lorebooks | gm-lore-parser extension (auto) | Per-NPC memories. Core = constant. Episodic = keyword-triggered. |
-
-Rules travel with the GM card. Campaign lore lives in the campaign file. NPC memories live in their own files.
+| GM card embedded book | card author / Architect | Block-protocol reminder + system rules |
+| Campaign lorebook | extension | `[System Definition]` (constant), NPC core/state/progression, creatures, factions+reputation, items, abilities, quests, world events, locations, rules, events |
+| `npc-{slug}` lorebooks | extension (auto) | Per-NPC memories — core (constant) + episodic (keyword-triggered) |
 
 ---
 
@@ -511,31 +333,16 @@ Rules travel with the GM card. Campaign lore lives in the campaign file. NPC mem
 
 | Setting | Default | Description |
 |---|---|---|
-| Enable GM Lore Parser | on | Master on/off switch |
-| Campaign Lorebook | — | Target lorebook for all lore entries |
-| Hide blocks in chat | on | Strip raw blocks from visible chat after processing |
-| Show toast notifications | on | Brief notice on lorebook writes and stat changes |
-| Scan user messages | off | Also parse lore blocks in player messages |
-| Show status panel | on | Live character panel above chat input |
+| Enable GM Lore Parser | on | Master switch |
+| Campaign Lorebook | — | Target lorebook for all entries and the system definition |
+| Hide blocks in chat | on | Strip raw blocks from the visible message after processing |
+| Show toast notifications | on | Notices on saves and stat changes |
+| Scan user messages | off | Also parse blocks in player messages |
+| Intercept # commands | on | Answer `#` commands locally |
+| Panel toggles | on | Status / skills / domain / quests / reputation / events / currency / abilities / needs panels (a panel also hides when its feature is disabled in the system definition) |
 | Inject into context | on | Character state in Author's Note position |
-| Context injection depth | 1 | Messages from bottom where state injects (0 = very bottom) |
-| Lorebook scan depth | 4 | ST keyword scan depth for new lorebook entries |
-| Lore entry order | 100 | Priority for NPC / Location / Faction / Item / Event entries |
-| Rule entry order | 50 | Priority for Rule entries (lower = injected before other lore) |
-
----
-
-## Block processing rules
-
-- All blocks are processed in message order, top to bottom
-- Lorebook entries are created on first appearance, updated in place on subsequent appearances (matched by comment field)
-- PLAYER_UPDATE silently ignores `gm_event`, `immutable`, and `use_tracked` base fields — logs a console warning
-- ATTR_CHANGE rejects the entire block if `reason` is missing
-- NPC_ATTR_CHANGE rejects the entire block if `reason` is missing, and requires the NPC to have a schema
-- BESTIARY entries are written once and never overwritten (immutable flag in extensions blob)
-- NPC_UPDATE checks use_tracked promotion thresholds after every write; promotions fire automatically
-- WORLD_TIME iterates all significant NPC schemas in the campaign lorebook; only NPCs with regen fields are processed (others skipped for performance)
-- CARD_OUTPUT triggers an immediate browser download of the parsed JSON
+| Context injection depth | 1 | Messages from bottom where state injects |
+| Scan / lore / rule order | 4 / 100 / 50 | Lorebook scan depth and entry ordering |
 
 ---
 

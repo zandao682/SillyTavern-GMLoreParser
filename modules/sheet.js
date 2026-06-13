@@ -1,13 +1,15 @@
 /**
  * gm-lore-parser / modules/sheet.js
- * Player sheet handlers — PLAYER_SHEET, PLAYER_UPDATE, ATTR_CHANGE, WORLD_TIME.
+ * Player stat-block seeding (applyPlayerSheet) + WORLD_TIME. The player's
+ * create/update/event flow runs through the unified entity core (modules/entity.js);
+ * applyPlayerSheet is the shared seeding helper it and character creation reuse.
  */
 
-// ── PLAYER_SHEET ──────────────────────────────────────────────────────────────
+// ── Player stat-block seeding (used by playerEntityBegin + creation) ──────────
 
 function applyPlayerSheet(raw) {
     const state  = getCharState();
-    const fields = parseFields(raw);
+    const fields = parseFlatFields(raw);   // top-level only — ignore schema descriptors
     if (fields.name)       state.name       = fields.name;
     if (fields.class)      state.class_     = fields.class;
     if (fields.background) state.background = fields.background;
@@ -15,7 +17,7 @@ function applyPlayerSheet(raw) {
     const ps = parseSchema(raw);
     if (Object.keys(ps.fields).length > 0) state.schema = ps;
 
-    const reserved = new Set(['name', 'class', 'background', 'schema', 'schema_version']);
+    const reserved = new Set(['name', 'class', 'background', 'schema', 'schema_version', 'type', 'from_template']);
     for (const [key, val] of Object.entries(fields)) {
         if (reserved.has(key)) continue;
         if (key === 'inventory')   state.values.inventory   = val.split(';').map(s => s.trim()).filter(Boolean);
@@ -24,58 +26,11 @@ function applyPlayerSheet(raw) {
     }
 }
 
-// ── PLAYER_UPDATE ─────────────────────────────────────────────────────────────
-
-function applyPlayerUpdate(raw) {
-    const fields  = parseFields(raw);
-    const state   = getCharState();
-    const schema  = state.schema?.fields || {};
-    const changes = [], blocked = [];
-
-    for (const [key, val] of Object.entries(fields)) {
-        if (SYS_PROTECTED.has(key)) { blocked.push(`${key}(system)`); continue; }
-        const desc = schema[key];
-        const mut  = desc ? getMutability(desc) : null;
-        if (mut === MUTABILITY.GM_EVENT)    { blocked.push(`${key}(gm_event)`); continue; }
-        if (mut === MUTABILITY.IMMUTABLE)   { blocked.push(`${key}(immutable)`); continue; }
-        if (mut === MUTABILITY.USE_TRACKED) { blocked.push(`${key}(use_tracked base)`); continue; }
-        if (!desc) { blocked.push(`${key}(not in schema)`); continue; }
-        applyFieldValue(key, val, desc, state.values);
-        changes.push(key);
-    }
-    if (blocked.length) console.warn(`[${MODULE_NAME}] PLAYER_UPDATE blocked: ${blocked.join(', ')}`);
-    return changes;
-}
-
-// ── ATTR_CHANGE ───────────────────────────────────────────────────────────────
-
-function applyAttrChange(raw) {
-    const fields  = parseFields(raw);
-    const state   = getCharState();
-    const schema  = state.schema?.fields || {};
-    const changes = [], blocked = [];
-    const reason  = fields.reason;
-    if (!reason) {
-        console.warn(`[${MODULE_NAME}] ATTR_CHANGE missing reason`);
-        return { changes: [], blocked: ['no reason'], reason: null };
-    }
-    for (const [key, val] of Object.entries(fields)) {
-        if (key === 'reason') continue;
-        if (SYS_PROTECTED.has(key)) { blocked.push(key); continue; }
-        const desc = schema[key];
-        const mut  = desc ? getMutability(desc) : null;
-        if (mut !== MUTABILITY.GM_EVENT) { blocked.push(`${key}(${mut || 'unknown'})`); continue; }
-        const oldVal = state.values[key];
-        applyFieldValue(key, val, desc, state.values);
-        state.attr_change_log.push({
-            field: key, old_value: oldVal, new_value: state.values[key],
-            reason, timestamp: new Date().toISOString(),
-        });
-        changes.push({ key, oldVal, newVal: state.values[key] });
-    }
-    if (blocked.length) console.warn(`[${MODULE_NAME}] ATTR_CHANGE blocked: ${blocked.join(', ')}`);
-    return { changes, blocked, reason };
-}
+// Player update/event (PLAYER_UPDATE / ATTR_CHANGE) are now handled by the unified
+// entity core (modules/entity.js): playerEntityUpdate / playerEntityEvent call the
+// shared entityApplyUpdate / entityApplyEvent with the player handle + playerLogSink.
+// applyPlayerSheet (above) remains — it is reused by playerEntityBegin and the
+// character-creation flow.
 
 // ── WORLD_TIME ────────────────────────────────────────────────────────────────
 
