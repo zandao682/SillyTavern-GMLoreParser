@@ -14,7 +14,7 @@ async function processNpcBlock(fields, settings) {
     const dynamicFields = fields.dynamic_fields
         ? fields.dynamic_fields.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
         : ['attitude', 'location', 'condition', 'relationship_to_party', 'notes'];
-    const keys   = fields.keywords ? fields.keywords.split(',').map(k => k.trim()).filter(Boolean) : [name.toLowerCase()];
+    const keys   = fields.keywords ? normalizeKeys(fields.keywords.split(',')) : expandNameKeys(name);
     const schema = fields._inherited_schema || parseSchema(fields._raw || '');
     const hasSchema = Object.keys(schema.fields).length > 0;
 
@@ -87,8 +87,8 @@ async function processNpcMemory(raw, settings) {
     const title    = fields.title || '';
     const content  = fields.content || fields.memory || '';
     const keywords = fields.keywords
-        ? fields.keywords.split(',').map(k => k.trim()).filter(Boolean)
-        : isCore ? [] : [npcName.toLowerCase()];
+        ? normalizeKeys(fields.keywords.split(','))
+        : isCore ? [] : expandNameKeys(npcName);
     return processNpcMemoryDirect(npcName, memType, title, content, keywords, settings);
 }
 
@@ -152,7 +152,7 @@ async function processItemBlock(fields, settings) {
     const mutableFields = fields.mutable_fields
         ? fields.mutable_fields.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
         : [];
-    const keys  = fields.keywords ? fields.keywords.split(',').map(k => k.trim()).filter(Boolean) : [name.toLowerCase()];
+    const keys  = fields.keywords ? normalizeKeys(fields.keywords.split(',')) : expandNameKeys(name);
     const lines = [`[Item] ${name}`];
     if (fields.durability && fields.durability_max) {
         const c = itemConditionLabel(parseFloat(fields.durability), parseFloat(fields.durability_max));
@@ -217,7 +217,7 @@ async function processLocationBlock(fields, settings) {
     if (!fields.name) { console.warn(`[${MODULE_NAME}] LOCATION missing name`); return false; }
     const cfg   = locationsCfg();
     const name  = fields.name;
-    const keys  = fields.keywords ? fields.keywords.split(',').map(k => k.trim()).filter(Boolean) : [name.toLowerCase()];
+    const keys  = fields.keywords ? normalizeKeys(fields.keywords.split(',')) : expandNameKeys(name);
 
     const lines = [`[Location] ${name}`];
     if (fields.type)        lines.push(`Type: ${fields.type}`);
@@ -256,8 +256,8 @@ async function processLocationMemory(raw, settings) {
     const memType  = (fields.type || 'episodic').toLowerCase();
     const title    = fields.title || '';
     const content  = fields.content || fields.memory || '';
-    const keywords = fields.keywords ? fields.keywords.split(',').map(k => k.trim()).filter(Boolean)
-                                     : (memType === 'core' ? [] : [name.toLowerCase()]);
+    const keywords = fields.keywords ? normalizeKeys(fields.keywords.split(','))
+                                     : (memType === 'core' ? [] : expandNameKeys(name));
     return writeSubjectMemory(name, 'location', memType, title, content, keywords, settings);
 }
 
@@ -278,8 +278,8 @@ async function processGenericLore(type, cfg, fields, settings) {
     const name  = fields.name || `Event ${Date.now()}`;
     const keyFd = type === 'RULE' ? 'trigger_keywords' : 'keywords';
     const keys  = fields[keyFd]
-        ? fields[keyFd].split(',').map(k => k.trim()).filter(Boolean)
-        : [name.toLowerCase()];
+        ? normalizeKeys(fields[keyFd].split(','))
+        : expandNameKeys(name);
     const lines = [`[${cfg.label}] ${name}`];
     for (const [k, v] of Object.entries(fields)) if (!LORE_META.has(k)) lines.push(`${k.replace(/_/g, ' ')}: ${v}`);
     return upsertEntry(settings.campaignLorebook, {

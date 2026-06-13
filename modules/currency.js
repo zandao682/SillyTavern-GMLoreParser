@@ -5,7 +5,7 @@
  *
  *   [CURRENCY_UPDATE_BEGIN] … [CURRENCY_UPDATE_END]   gold: +10 / silver: -5
  *
- * Ranks/XP now live in modules/progression.js; companions in modules/companions.js.
+ * Ranks/XP now live in modules/progression.js; companions in modules/entity.js.
  */
 
 // ── Currency ──────────────────────────────────────────────────────────────────

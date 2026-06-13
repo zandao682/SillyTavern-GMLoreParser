@@ -62,9 +62,11 @@ function applyXpAward(raw) {
     if (!state.xp_total) state.xp_total = 0;
     state.xp_total += awarded;
 
-    const xpKey = Object.keys(state.values || {}).find(k => /^xp$/i.test(k));
-    if (xpKey !== undefined) {
-        state.values[xpKey] = (state.values[xpKey] || 0) + awarded;
+    // Mirror onto the player's XP field as named by the System Definition
+    // (def.progression.xp_field; default 'xp'), only if that field exists.
+    const xpField = getSystemDef().progression?.xp_field || 'xp';
+    if (state.values && state.values[xpField] !== undefined) {
+        state.values[xpField] = (state.values[xpField] || 0) + awarded;
     }
     console.log(`[${MODULE_NAME}] XP award: +${awarded}${modifier !== 1 ? ` (×${modifier})` : ''} — total: ${state.xp_total}`);
     return true;
@@ -73,7 +75,7 @@ function applyXpAward(raw) {
 // ── Context string ────────────────────────────────────────────────────────────
 
 function buildRankContextString(adventurer_rank) {
-    return adventurer_rank?.rank ? `[Guild Rank] ${adventurer_rank.rank}` : '';
+    return adventurer_rank?.rank ? `[Rank] ${adventurer_rank.rank}` : '';
 }
 
 // ── Panel HTML ────────────────────────────────────────────────────────────────
@@ -83,7 +85,7 @@ function buildRankPanel(adventurer_rank) {
     const ladder = adventurer_rank.rank_ladder || getRankLadder();
     const idx    = ladder.indexOf(adventurer_rank.rank);
     const pct    = idx >= 0 ? Math.round((idx / (ladder.length - 1)) * 100) : 0;
-    return `<div class="glp-section"><div class="glp-section-title">Guild Rank</div>
+    return `<div class="glp-section"><div class="glp-section-title">Rank</div>
         <div class="glp-rank-row">
             <span class="glp-rank-label">${adventurer_rank.rank}</span>
             <div class="glp-rank-bar-wrap"><div class="glp-rank-bar" style="width:${pct}%"></div></div>

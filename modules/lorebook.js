@@ -44,6 +44,25 @@ async function upsertEntry(lorebookName, entry) {
     return true;
 }
 
+/** Remove entries whose comment is NOT in keepSet but whose extensions.type
+ *  matches `ofType` (so we only prune entries this extension owns). Returns the
+ *  number removed. Used to drop stale [System Rule] entries when a feature is
+ *  disabled or a rule is no longer emitted. */
+async function removeEntriesByComment(lorebookName, keepSet, ofType) {
+    const { loadWorldInfo, saveWorldInfo } = SillyTavern.getContext();
+    const data = await loadWorldInfo(lorebookName);
+    if (!data || !data.entries) return 0;
+    let removed = 0;
+    for (const [uid, e] of Object.entries(data.entries)) {
+        if (ofType && e.extensions?.type !== ofType) continue;
+        if (keepSet.has(e.comment)) continue;
+        delete data.entries[uid];
+        removed++;
+    }
+    if (removed) await saveWorldInfo(lorebookName, data);
+    return removed;
+}
+
 /** Attach a lorebook to the current chat (idempotent). */
 async function linkToChat(name) {
     const { chatMetadata, saveMetadata } = SillyTavern.getContext();

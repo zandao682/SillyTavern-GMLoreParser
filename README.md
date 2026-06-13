@@ -1,11 +1,11 @@
 # GM Lore Parser
 
-A SillyTavern extension that automates campaign record-keeping for AI-run tabletop RPGs. The GM (or the Architect that designs a game) emits structured blocks at the end of messages; the extension parses them and maintains the ruleset, character/NPC/companion state, lorebooks, abilities, world time, and more — automatically.
+A SillyTavern extension that automates campaign record-keeping for AI-run tabletop RPGs. The GM (or the Architect that designs a game) emits structured blocks at the end of messages; the extension parses them and maintains the ruleset, character/NPC/companion state, lorebooks, capabilities, world time, and more — automatically.
 
 **Version:** 0.0.9 (beta)
 **Requires:** SillyTavern 1.12.0+
 
-It is system-agnostic: a single `[SYSTEM_DEF]` block defines the ruleset (which subsystems exist, attributes, derived-stat formulas, progression model, optional classes, reputation/skill/needs settings, conflict resolution, and more). Player, NPC, Companion, and Creature share one stat-block engine via the unified `[ENTITY]` family; Boons/Titles/Passives/Evolution are one `[ABILITY]` concept. Levels, XP, classes, skills, reputation, needs, and the other subsystems are all opt-in — a classless, levelless, skill-based system is fully supported.
+It is system-agnostic: a single `[SYSTEM_DEF]` block defines the ruleset (which subsystems exist, attributes, derived-stat formulas, progression model, optional classes, reputation/skill/needs settings, conflict resolution, and more). Player, NPC, Companion, and Creature share one stat-block engine via the unified `[ENTITY]` family; Boons/Titles/Passives/Evolution/Skills are one `[CAPABILITY]` concept with configurable progression. Levels, XP, classes, capabilities, reputation, needs, and the other subsystems are all opt-in — a classless, levelless, skill-based system is fully supported.
 
 ---
 
@@ -14,9 +14,9 @@ It is system-agnostic: a single `[SYSTEM_DEF]` block defines the ruleset (which 
 The extension is a single entry point (`index.js`) that loads `modules/` in order:
 
 ```
-state · utils · lorebook · system · schema · entity · companions ·
-progression · inventory · skills · domain · lore · sheet · creation ·
-quests · reputation · events · currency · abilities · needs ·
+state · utils · lorebook · system · schema · entity ·
+progression · inventory · capabilities · domain · lore · sheet · creation ·
+quests · reputation · events · currency · needs ·
 commands · panel · context
 ```
 
@@ -53,7 +53,7 @@ The system definition is cached per chat and re-hydrated from the lorebook on ch
 [SYSTEM_DEF_BEGIN]
 name: Veridia
 
-features: skills, ranks, reputation, currency, needs, companions, domains, quests, abilities, world_events
+features: capabilities, ranks, reputation, currency, needs, companions, domains, quests, world_events
 
 identity:
   class | Class
@@ -99,13 +99,20 @@ reputation:
   initial: 50
   tiers: Hostile, Cold, Neutral, Friendly, Allied, Sworn
 
-skills:
-  enabled: true
-  leveled: true
-  tiers: Novice, Apprentice, Adept, Expert, Master, Grandmaster, Saint, God
-  levels_per_tier: 10
-  pp_per_level: 100 * tier_rank
-  score: 10 + total_levels * 2.5
+capabilities:
+  categories: boon, title, passive, trait, evolution, skill
+  default_category: boon
+  exclusive_category: title
+  category_progression: skill:veridia_pp
+  inspect_capability: awareness
+progressions:
+  profile: veridia_pp | points_tiers
+    tier_names: Novice, Apprentice, Adept, Expert, Master, Grandmaster, Saint, God
+    levels_per_tier: 10
+    cost_formula: 100 * tier_rank
+    score_formula: 10 + total_levels * 2.5
+  profile: simple_level | counter
+    score_formula: skill_level
 
 rank_ladder: F, E, D, C, B, A, S, SS, SSS
 
@@ -141,9 +148,11 @@ companions:
   roles: standard, lieutenant
   lieutenant_role: lieutenant
   statuses: Active, Inactive, Dismissed, Dead
-abilities:
-  categories: boon, title, passive, trait, evolution
-  exclusive_category: title
+
+rules:
+  rule: resolution
+    keywords: parry, riposte
+    content: Override prose for the [System Rule] Resolution entry.
 
 inventory:
   model: slots            # freeform | slots | weight
@@ -174,14 +183,16 @@ commands:
 
 **Every section is optional** and merges over the built-in defaults:
 
-- `features:` — a comma list of the **enabled** subsystems (skills, ranks, reputation, currency, needs, companions, domains, quests, abilities, world_events, equipment). Anything omitted is disabled: its blocks no-op, its panel section hides, its context injection is suppressed, and its commands drop out. Omit the whole section to keep all features on.
+- `features:` — a comma list of the **enabled** subsystems (capabilities, ranks, reputation, currency, needs, companions, domains, quests, world_events, equipment). Anything omitted is disabled: its blocks no-op, its panel section hides, its context injection is suppressed, and its commands drop out. Omit the whole section to keep all features on.
 - `progression:` — `levels:false`/`xp:false` produce a levelless / XP-less system. `level` is exposed to formulas only when `levels:true`.
 - `identity:` / `classes:` — declared identity fields (class/background/race) and an optional class catalogue (modifiers + granted skills/abilities; same shape serves races/backgrounds).
 - `attributes:` / `derived:` — `key | label | abbr` rows and `key = formula -> target[, also…]` rows, evaluated with a strict arithmetic-only whitelist (no code execution).
 - `reputation:` / `loyalty:` — custom `scale: min-max`, `initial`, and tier names.
-- `skills:` — `enabled`/`leveled` toggles, tier names, `levels_per_tier`, `pp_per_level` / `score` formulas.
-- `resolution:` — documents how checks are resolved (d20 vs DC, d100 roll-under, dice pool, 2d6+mod, …). The extension never rolls; this is injected into context so the GM resolves checks consistently.
-- **Vocabularies** — `quests`, `world_events`, `factions`, `companions`, `abilities` let a system rename statuses/categories/roles/attitudes and their defaults.
+- `capabilities:` — the unified boon/title/passive/trait/evolution/skill primitive. `categories` (the vocabulary), `default_category`, `exclusive_category` (one active at a time, e.g. title), `category_progression` (maps a category → a profile in `progressions:`), and `inspect_capability` (the capability whose tier gates `#inspect` detail; set blank for no gating). A capability's **category** says *what* it is; its **progression** says *how* it advances — orthogonal.
+- `progressions:` — named progression profiles a capability can reference. Each `profile: <id> | <type>` with `type ∈ none | counter | use_tracked | points_tiers | xp_levels | milestone` and optional `tier_names` / `levels_per_tier` / `cost_formula` / `score_formula`. The Veridia PP/tier model is the built-in `veridia_pp` profile — author your own for other systems.
+- `resolution:` — documents how checks are resolved (d20 vs DC, d100 roll-under, dice pool, 2d6+mod, …). The extension never rolls; this is injected into context so the GM resolves checks consistently. The terse mechanic line is always-on; the full difficulty table moves to the keyword-triggered `[System Rule] Resolution` entry.
+- `rules:` — optional per-rule overrides for the keyword-triggered `[System Rule]` entries. Each `rule: <id>` may set `keywords:` (added to the def-derived trigger words) and `content:` (replaces the derived prose). `emit_rule_entries: false` suppresses these entries entirely.
+- **Vocabularies** — `quests`, `world_events`, `factions`, `companions`, `capabilities` let a system rename statuses/categories/roles/attitudes and their defaults.
 - **Possessions** — `inventory` (model `freeform`/`slots`/`weight` + `capacity`/`unit`, optional `item_box`) and `equipment` (system-defined `slot:` set, gated by `features.equipment`).
 - `locations:` — location `types`, whether discovery auto-creates a per-location history lorebook, and an optional `instances` subtype (only when `instance.enabled`).
 - `commands:` — reshape the `#` command set: alias/rename a built-in `view`, or add a custom command whose `template` renders `{tokens}` against character state. When present it defines the active set (plus always-on `#status`/`#vitals`/`#system`/`#help`).
@@ -295,29 +306,44 @@ keywords: guard, protesters
 
 ---
 
-## Abilities — boons, titles, passives, traits, evolution
+## Capabilities — boons, titles, passives, traits, evolution, skills
+
+One unified primitive. **Category** = what it is (vocabulary, exclusivity, default activation); **progression** = how it advances (a profile from `progressions:`). The two are orthogonal, so a system can make titles progress or skills static.
 
 ```
-[ABILITY_BEGIN]
+[CAPABILITY_BEGIN]
 name: Ember Heart
-category: boon              # boon | title | passive | trait | evolution
+category: boon              # from def.capabilities.categories (boon|title|passive|trait|evolution|skill)
+progression: none          # optional; else def.capabilities.category_progression[category]
 activation: on_use         # always | on_condition | on_use
 description: Ignite your blade with divine fire
 effects: +2 fire damage on hit
+governing: might, resolve  # attributes a progressing capability draws on
 entity: <owner name>       # optional; defaults to the player
 keywords: ember, fire blade
-[ABILITY_END]
+[CAPABILITY_END]
 ```
 
-- **title** — set `active: true` to display it; only one title is active per owner at a time.
-- **evolution** — `stat_changes: might:+5, resolve:+3` are applied to the owner as a logged milestone event (gm_event semantics).
-- Racial/innate `passive` abilities are emitted during character creation in place of a free-text passives list.
+- **title** (the `exclusive_category`) — set `active: true` to display it; only one is active per owner at a time.
+- **evolution** — `stat_changes: might:+5, resolve:+3` are applied to the owner as a logged milestone event (gm_event semantics) on declaration.
+- Racial/innate `passive` capabilities are emitted during character creation in place of a free-text passives list.
+- **Progressing capabilities** (e.g. the `skill` category mapped to `veridia_pp`) advance via `[CAPABILITY_UPDATE]`:
+
+```
+[CAPABILITY_UPDATE_BEGIN]
+capability: Swordsmanship   # repeat for several capabilities in one block
+points: 250                 # awarded toward the next level (profile-dependent)
+level: 3                    # OR set an absolute level (counter / milestone profiles)
+governing: agility, might
+branch: Riposte             # optional branch unlock
+[CAPABILITY_UPDATE_END]
+```
 
 ---
 
 ## Other blocks (gated by `features`)
 
-- **Skills** — `[SKILL_SYSTEM]` configures the model; `[SKILL_UPDATE]` awards PP and advances tiers. Tier names / formulas come from the system definition unless overridden here.
+- **Capability progression** — `[CAPABILITY_UPDATE]` awards points / sets levels and advances tiers per the capability's progression profile (from `progressions:` in the system definition).
 - **Reputation & factions** — `[FACTION_BEGIN]` / `[FACTION_UPDATE]` define lore; `[REPUTATION_UPDATE]` changes standing on the system's scale/tiers. Both feed one combined lorebook entry per faction.
 - **Quests** — `[QUEST_BEGIN]` / `[QUEST_UPDATE]`.
 - **World** — `[WORLD_EVENT]` / `[WORLD_EVENT_UPDATE]` / `[PLOT_ENTRY]`.
@@ -334,37 +360,39 @@ keywords: ember, fire blade
 
 ## Commands
 
-Typed by the player; answered locally without calling the model.
+Players type `#` commands that are answered locally, without calling the model. Commands are **not a fixed list** — they are a registry of **views** (each a small renderer over character state), and the active command set is *derived per System Definition*:
 
-| Command | Shows |
-|---|---|
-| `#status` / `#character` | Full character sheet |
-| `#vitals` | HP/MP/resources with regen rates |
-| `#skills` | Skill list with tiers and PP |
-| `#inventory` / `#bag` | Inventory list |
-| `#domain` | Domain statistics |
-| `#time` | Current in-world time |
-| `#quests` | Quest tracker |
-| `#rep` / `#reputation` | Faction reputation standings |
-| `#factions` | Full faction roster with lore |
-| `#events` | World events log |
-| `#currency` / `#gold` | Wallet and denominations |
-| `#rank` | Guild / adventurer rank |
-| `#companions [name]` | Companion roster (optional filter) |
-| `#legion` / `#hierarchy` | Full command delegation tree |
-| `#boons` / `#titles` / `#abilities` | Abilities by category |
-| `#equipment` | Equipped items by slot |
-| `#itembox` | Item box contents |
-| `#needs` | Life-simulation meters |
-| `#locations` | Location types & info |
-| `#inspect [target]` | Inspect a target by Awareness tier |
-| `#system` / `#ruleset` | System definition & resolution mechanic |
-| `#help` | Command list |
+- **Each view has a default trigger, a gating feature, and a help label.** The triggers below are the built-in defaults, not hardcoded commands.
+- **Feature-gated** — a view whose subsystem is disabled in `features:` drops out of both the dispatcher and `#help` (e.g. no rank view when `ranks` is off). Only `status`, `vitals`, `system`, and `help` are always available.
+- **Capability views are def-derived** — one view per category declared in `def.capabilities`, so its default trigger follows the category name (a `boon` category → `#boons`, a `gift` category → `#gifts`), plus `#skills` (progressing) and `#abilities` (static). Renaming or adding a category automatically yields a sensibly-named command.
+- **Reshapeable via the `commands:` section** — rename/alias a view's triggers, drop one (omit it), or add a custom command whose `template` renders `{token}`s of state. When `commands:` is present it defines the active set (the four always-on views aside); `#help` is generated from it.
 
-**The command set is configurable.** The table above is just the default. The active set is:
+**Built-in views and their default triggers** (everything here is an example of the defaults, all overridable):
 
-- **Feature-gated** — a command whose subsystem is disabled in `features:` drops out of both the dispatcher and `#help` (e.g. no `#rank` when `ranks` is off). `#status`, `#vitals`, `#system`, and `#help` are always available.
-- **Reshapeable via the System Definition `commands:` section** — you can rename/alias a built-in view, drop one (omit it), or add a custom command whose `template` renders `{token}`s of character state. When `commands:` is present it defines the active set (the four always-on commands aside); `#help` is generated from it.
+| View | Default trigger(s) | Shows |
+|---|---|---|
+| status | `#status` / `#character` | Full character sheet |
+| vitals | `#vitals` | HP/MP/resources with regen rates |
+| inventory | `#inventory` / `#bag` | Inventory list |
+| equipment | `#equipment` | Equipped items by slot |
+| itembox | `#itembox` | Item box contents |
+| domain | `#domain` | Domain statistics |
+| time | `#time` | Current in-world time |
+| quests | `#quests` | Quest tracker |
+| rep / factions | `#rep` / `#reputation`, `#factions` | Reputation standings / faction roster |
+| events | `#events` | World events log |
+| currency | `#currency` / `#wallet` | Wallet and denominations |
+| rank | `#rank` | Guild / adventurer rank |
+| companions / legion | `#companions [name]`, `#legion` / `#hierarchy` | Roster / delegation tree |
+| capability (per category) | `#<category>s` — e.g. `#boons`, `#titles` | One view per capability category (def-derived) |
+| skills / abilities | `#skills`, `#abilities` | Progressing capabilities / static capabilities |
+| needs | `#needs` | Life-simulation meters |
+| locations | `#locations` | Location types & info |
+| inspect | `#inspect [target]` | Inspect a target; detail optionally gated by `def.capabilities.inspect_capability` |
+| system | `#system` / `#ruleset` | System definition & resolution mechanic |
+| help | `#help` | The active command list |
+
+Reshape the set in the System Definition — alias a built-in view, or add a template command:
 
 ```
 commands:
@@ -382,7 +410,7 @@ Template tokens include `{name}` `{class}` `{rank}` `{field}` `{field_max}` `{fi
 
 ## Status panel
 
-A live, schema-driven panel renders above the chat input: identity + active title, grouped fields (bars/values/pools/lists), and collapsible sections for needs, skills, domains, quests, reputation, world events, currency, rank, companions, equipment & inventory, and abilities & titles. During an active creation session it shows the creation step checklist instead. Disabled features and empty sections are hidden.
+A live, schema-driven panel renders above the chat input: identity + active title, grouped fields (bars/values/pools/lists), and collapsible sections for needs, capabilities (static + progressing), domains, quests, reputation, world events, currency, rank, companions, and equipment & inventory. During an active creation session it shows the creation step checklist instead. Disabled features and empty sections are hidden.
 
 ---
 
@@ -391,8 +419,10 @@ A live, schema-driven panel renders above the chat input: identity + active titl
 | Lorebook | Created by | Contains |
 |---|---|---|
 | GM card embedded book | card author / Architect | Block-protocol reminder + system rules |
-| Campaign lorebook | extension | `[System Definition]` (constant), NPC core/state/progression, creatures, factions+reputation, items, abilities, quests, world events, locations, rules, events |
+| Campaign lorebook | extension | `[System Definition]` (constant), `[System Rule]` entries (keyword-triggered), NPC core/state/progression, creatures, factions+reputation, items, capabilities, quests, world events, locations, rules, events |
 | `npc-{slug}` lorebooks | extension (auto) | Per-NPC memories — core (constant) + episodic (keyword-triggered) |
+
+**Keyword triggering.** Keyword-triggered entries load into context only when the chat mentions one of their keys. The parser normalizes every key set (trim, lowercase, dedup) and, when you don't supply explicit `keywords:`, derives them from the entry's name via `expandNameKeys`: the full lowercased name plus a conservative significant sub-phrase (e.g. "The Lost Heir" also triggers on "lost heir"), never bare common words. `[System Rule]` entries derive their keys from the System Definition's own vocabulary (tier names, rank labels, attitudes, need meters, dice tokens…). When you do supply `keywords:`, give 2–5 specific, distinctive terms and avoid generic words, which over-trigger.
 
 ---
 
@@ -406,7 +436,7 @@ A live, schema-driven panel renders above the chat input: identity + active titl
 | Show toast notifications | on | Notices on saves and stat changes |
 | Scan user messages | off | Also parse blocks in player messages |
 | Intercept # commands | on | Answer `#` commands locally |
-| Panel toggles | on | Status / skills / domain / quests / reputation / events / currency / abilities / needs panels (a panel also hides when its feature is disabled in the system definition) |
+| Panel toggles | on | Status / capabilities (skill + boon sub-sections) / domain / quests / reputation / events / currency / needs panels (a panel also hides when its feature is disabled in the system definition) |
 | Inject into context | on | Character state in Author's Note position |
 | Context injection depth | 1 | Messages from bottom where state injects |
 | Inject resolution | on | Prepend the system's conflict-resolution mechanic to context |

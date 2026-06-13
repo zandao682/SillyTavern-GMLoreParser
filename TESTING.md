@@ -12,7 +12,7 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 
 | # | Step | Verify |
 |---|------|--------|
-| P1 | Install both extensions under `…/extensions/third-party/`, reload ST. | Console: `[gm-lore-parser] v0.0.9 loaded…` and `[gm-narrative-header] v0.0.2 loaded.`; both drawers appear under Extensions. |
+| P1 | Install both extensions under `…/extensions/third-party/`, reload ST. | Console: `[gm-lore-parser] v0.0.10 loaded…` and `[gm-narrative-header] v0.0.3 loaded.`; both drawers appear under Extensions. |
 | P2 | World Info → create lorebook **`harness-campaign`** (empty). | Appears in World Info. |
 | P3 | gm-lore-parser settings → **Campaign Lorebook = `harness-campaign`**. | Persists across reload. |
 | P4 | gm-lore-parser settings: Enabled ✔, Hide raw blocks ✔, Toasts ✔, Intercept # commands ✔, Inject into context ✔, Inject resolution ✔, all panels ✔, Scan user messages ✘. | Checkboxes match. |
@@ -37,7 +37,10 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 | ID | Precondition | Action | Expected |
 |----|----|----|----|
 | SD-01 | P1–P6 | `emit: system_def default` | Toast "entry saved"; lorebook gains a **constant** entry `[System Definition]` whose content lists `Features: …`, `Attributes: …`, `Resolution: d20 + modifier vs. DC`. `chatMetadata['gm-lore-parser'].system_def.name === 'Default (Veridia)'`. |
-| SD-02 | SD-01 | `emit: system_def minimal_skill` | `[System Definition]` entry upserted (same comment); summary shows `Progression: levelless`, only `Features: skills`. Reputation/currency/etc. blocks now no-op (see XC-GATE). |
+| SD-02 | SD-01 | `emit: system_def minimal_skill` | `[System Definition]` entry upserted (same comment); summary shows `Progression: levelless`, only `Features: capabilities`. Reputation/currency/etc. blocks now no-op (see XC-GATE). |
+| SD-RULE-01 | SD-01 | After `emit: system_def default`, inspect `harness-campaign` | Keyword-triggered (NON-constant) `[System Rule]` entries exist (Resolution, Capabilities, Reputation, Ranks, Companions, Needs, Progression). Each entry's `key` list is derived from the def's vocabulary (e.g. Capabilities keys include the category names + tier names `novice…god`; Reputation keys include `hostile…sworn`). The always-on `[System Definition]` summary stays terse (no full difficulty table). |
+| SD-RULE-02 | SD-RULE-01 | `emit: system_def minimal_skill` (reputation/ranks off) | `[System Rule] Reputation` and `[System Rule] Ranks` are pruned from the lorebook; Capabilities + Progression rules remain. |
+| SD-PROG-01 | P1–P6 | `emit: system_def custom_progression` (a profile of `type: counter` mapped to the skill category), then `emit: capability skill "Tracking"` + `emit: capability_update "Tracking" level:3` | Tracking advances as a flat counter to Lv3 (no PP/tiers); a static `none` capability declared alongside never changes level/score. |
 
 ### 4.2 Character creation
 | ID | Precondition | Action | Expected |
@@ -53,23 +56,24 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 | ENT-EVT-01 | ENT-01 | `emit: entity_event player` (with reason) | gm_event field changes; an entry appears in `attr_change_log` (inspect via console `getCharState()`). |
 | ENT-MEM-01 | ENT-04 | `emit: entity_memory` | Per-NPC lorebook `npc-garrick-stone` created + linked; a `[Memory] Garrick Stone — …` entry added. |
 
-### 4.4 Abilities
+### 4.4 Capabilities (static)
 | ID | Precondition | Action | Expected |
 |----|----|----|----|
-| ABL-01 | SD-01, ENT-01 | `emit: ability boon` | Abilities panel lists "Ironhide"; `[Ability] Ironhide` entry; `#boons` shows it. |
-| ABL-02 | ABL-01 | `emit: ability title "Dragonslayer"` then `emit: ability title "Lord of Ash"` | Only the latter is `active` (★); `#titles` shows one ★, one ○; `{active_title}` = "Lord of Ash". |
-| ABL-EVO-01 | ENT-01 (with might/fortitude) | `emit: ability evolution` | `stat_changes` applied as a logged event (might +2, fortitude +1); `#abilities` lists it under Evolutions. |
+| CAP-01 | SD-01, ENT-01 | `emit: capability boon` | Capabilities panel lists "Ironhide"; `[Capability] Ironhide` entry; `#boons` shows it. |
+| CAP-02 | CAP-01 | `emit: capability title "Dragonslayer"` then `emit: capability title "Lord of Ash"` | Only the latter is `active` (★); `#titles` shows one ★, one ○; `{active_title}` = "Lord of Ash". |
+| CAP-EVO-01 | ENT-01 (with might/fortitude) | `emit: capability evolution` | `stat_changes` applied as a logged event (might +2, fortitude +1); `#abilities` lists the static capabilities. |
 
-### 4.5 Skills
+### 4.5 Capabilities (progressing)
 | ID | Precondition | Action | Expected |
 |----|----|----|----|
-| SKL-01 | SD-01 | `emit: skill_system pp` then `emit: skill_update` | `#skills` shows `Swordsmanship: Novice/Apprentice Lv… | PP …/… | Score …`; tier/level toasts; branch "Riposte" unlock toast. |
-| SKL-02 | SD-01 | `emit: skill_system use_tracked` then a `skill_update` | Skill tracked without PP tiers; `#skills` shows level + uses. |
+| CAP-PRG-01 | SD-01 | `emit: capability skill "Swordsmanship"` then `emit: capability_update "Swordsmanship" points:250` | `#skills` shows `Swordsmanship: Novice/Apprentice Lv… \| PP …/… \| Score …` (veridia_pp profile); tier/level toasts; branch "Riposte" unlock toast. `{skill_score:Swordsmanship}` resolves to `prog.score`. |
+| CAP-PRG-02 | SD-PROG-01 (custom_progression def) | `emit: capability_update "Tracking" level:3` | Flat-counter advance to Lv3, no tiers; panel/`#skills` show the level without a PP bar. |
+| CAP-LAZY-01 | SD-01 | `emit: capability_update "Alchemy" points:120` (no prior declaration) | Capability lazily created under the first progressing category and advanced; appears in `#skills`. |
 
 ### 4.6 Progression & economy
 | ID | Precondition | Action | Expected |
 |----|----|----|----|
-| ECO-01 | SD-01 | `emit: currency_update` | Currency panel: gold +50, silver clamped ≥0; `#gold` reflects totals. |
+| ECO-01 | SD-01 | `emit: currency_update` | Currency panel: gold +50, silver clamped ≥0; `#currency` / `#wallet` reflects totals. |
 | PRG-01 | SD-01 | `emit: rank_change adventurer` | `#rank` shows C; rank panel bar advances; history F→C. |
 | PRG-XP-01 | SD-01, ENT-01 with `xp` field | `emit: xp_award` | `xp` value increases by 250; `state.xp_total` tracked. |
 
@@ -130,7 +134,7 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 | CMD-01 | ENT-01 | type `#status` | Transient `glp-cmd-response` block (fades ~60 s) shows the sheet; **no** model call. |
 | CMD-help-01 | SD-01 | type `#help` | Lists only active (feature-enabled) commands. |
 | CMD-02 | `emit: system_def custom_commands`, then type `#wounds` | Renders `HP <cur>/<max> — <conditions>` via the template; `#party` aliases the companions view; built-ins `#status/#vitals/#system/#help` still present. |
-| INS-01 | EVT-01/QST-01 exist | type `#inspect Thornwall` | Returns awareness-tier hints referencing matching events/quests. |
+| INS-01 | EVT-01/QST-01 exist | type `#inspect Thornwall` | Returns hints referencing matching events/quests. If the player has the `def.capabilities.inspect_capability` (default "awareness"), a `<Name> tier: …` line gates detail; with no such capability (or `inspect_capability` unset) the tier line is omitted and hints show ungated. |
 
 ### 4.16 Output / misc
 | ID | Precondition | Action | Expected |
@@ -144,7 +148,7 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 
 | ID | Action | Expected |
 |----|----|----|
-| XC-GATE-01 | `emit: system_def minimal_skill`, then `emit: currency_update` | Block **silently no-ops**; currency panel hidden; `#gold` dropped from `#help`; context omits `[Currency]`. |
+| XC-GATE-01 | `emit: system_def minimal_skill`, then `emit: currency_update` | Block **silently no-ops**; currency panel hidden; `#currency`/`#wallet` dropped from `#help`; context omits `[Currency]`. |
 | XC-GATE-02 | reputation disabled → type `#rep` | No response (view not in active set; not always-on). |
 | XC-PERSIST-01 | After SD-01 + ENT-01, switch chats and back | `onChatChanged` re-hydrates def from `[System Definition]`; panel + context rebuilt; sheet survives. |
 | XC-PERSIST-02 | New chat, never emit SYSTEM_DEF, lorebook already has `[System Definition]` | `loadSystemDefFromLorebook` hydrates the def on first message/chat change. |
@@ -165,15 +169,17 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 |----|----|----|
 | REG-01 | `emit: entity_event no_reason` | Rejected (`{blocked:['no reason']}`); no change-log entry; console warns "ENTITY_EVENT missing reason". |
 | REG-02 | `emit: entity_update player` targeting a gm_event/immutable field | Both blocked; console warns `blocked: <key>(gm_event), <key>(immutable)`; values unchanged. |
-| REG-03 | abilities disabled → `emit: ability boon` | Ignored; panel hidden; `#boons` dropped; no `Abilities:` in context. |
+| REG-03 | capabilities disabled (a def whose `features:` omits `capabilities`) → `emit: capability boon` | Ignored; panel hidden; `#boons`/`#skills`/`#abilities` dropped; no capability lines in context. |
 | REG-04 | `emit: system_def evil_formula`, then create a character | `FORMULA_SAFE_RE` rejects → derived hp falls back to 0; **no code executes** (no fetch). |
 | REG-05 | `emit: system_def minimal_skill` then `emit: entity player` | No level/class referenced; formulas without `level` resolve; `#status` omits Class. |
 | REG-06 | `emit: entity creature "Dire Wolf"`, then `emit: entity npc "Scarfang" from_template:"Dire Wolf" level:3` | NPC inherits template schema; ranges → midpoint; `_per_level` scaled by level 3; explicit fields override. |
-| REG-07 | (= ABL-02) title exclusivity | Only one active title per owner. |
+| REG-07 | (= CAP-02) title exclusivity | Only one active title (exclusive_category) per owner. |
 | REG-08 | Player `control_limit:5`; add companions whose total `control_cost` > 5 | Console warns `Control limit exceeded: <n>/5`; `#legion` shows the overage; companions still added (record-keeper). |
 | REG-09 | (= NDS-01/02) needs warn-only injection | Above-warn never injected; below-warn injected with LOW/CRITICAL. |
 | REG-10 | `emit: entity_update creature "Dire Wolf"` | Ignored; console warns "creatures are immutable templates — ignoring ENTITY_UPDATE". |
 | REG-11 | `emit: item` (mutable_fields: durability,charges), then `emit: item_update` changing a non-mutable field | Non-mutable change blocked; durability/charges accepted; condition label recomputed. |
+| REG-KEY-01 | `emit: quest "The Lost Heir"` (no explicit keywords) | `[Quest] The Lost Heir` entry's `key` list is `the lost heir` + the significant sub-phrase `lost heir` (via `expandNameKeys`); NO `"<rank>-rank quest"` key; no bare common words. Mentioning "lost heir" in chat surfaces the entry; an unrelated message does not. |
+| REG-KEY-02 | `emit: world_event_update` on an existing event with a `location` | The rebuilt `[World Event]` entry keeps BOTH the title sub-keys and the location key (regression: location no longer dropped on update). |
 
 ---
 
@@ -207,8 +213,9 @@ Delete `harness-campaign`, `harness-campaign-plot`, and any `location-*` / `npc-
 | ENTITY_UPDATE | ENT-04, POS-01, REG-02, REG-10 |
 | ENTITY_EVENT | ENT-EVT-01, REG-01 |
 | ENTITY_MEMORY | ENT-MEM-01 |
-| ABILITY ×5 | ABL-01, ABL-02, ABL-EVO-01, (passive/trait via `emit: ability passive/trait`) |
-| SKILL_SYSTEM / SKILL_UPDATE | SKL-01, SKL-02 |
+| CAPABILITY ×6 | CAP-01, CAP-02, CAP-EVO-01, (passive/trait/skill via `emit: capability passive/trait/skill`) |
+| CAPABILITY_UPDATE | CAP-PRG-01, CAP-PRG-02, CAP-LAZY-01 |
+| Progression profiles / [System Rule] entries | SD-PROG-01, SD-RULE-01, SD-RULE-02 |
 | FACTION / FACTION_UPDATE / REPUTATION_UPDATE | REP-01, REP-FU-01, REP-02 |
 | QUEST / QUEST_UPDATE | QST-01, QST-02 |
 | WORLD_EVENT / _UPDATE / PLOT_ENTRY | EVT-01, EVT-WU-01, EVT-02 |
@@ -223,11 +230,11 @@ Delete `harness-campaign`, `harness-campaign-plot`, and any `location-*` / `npc-
 | CARD_OUTPUT / COMMAND_RESPONSE | OUT-01, OUT-02, CMD-01 |
 | HEADER_FORMAT | HDR-01…HDR-06 |
 
-**Commands → test IDs:** `#status/#character`→CMD-01; `#vitals`→TIM-01; `#skills`→SKL-01; `#inventory/#bag`→ENT-01; `#equipment`→POS-01; `#itembox`→POS-BOX-01; `#domain`→DOM-01; `#time`→TIM-01; `#quests`→QST-01; `#rep/#reputation`→REP-02; `#factions`→REP-01; `#events`→EVT-01; `#locations`→LOC-01; `#currency/#gold`→ECO-01; `#rank`→PRG-01; `#companions`→`emit: entity companion`+`#companions`; `#legion/#hierarchy`→REG-08; `#boons`→ABL-01; `#titles`→ABL-02; `#abilities`→ABL-EVO-01; `#needs`→NDS-01; `#inspect`→INS-01; `#system/#ruleset`→SD-01; `#help`→CMD-help-01; custom/alias→CMD-02.
+**Commands → test IDs:** `#status/#character`→CMD-01; `#vitals`→TIM-01; `#skills`→CAP-PRG-01; `#inventory/#bag`→ENT-01; `#equipment`→POS-01; `#itembox`→POS-BOX-01; `#domain`→DOM-01; `#time`→TIM-01; `#quests`→QST-01; `#rep/#reputation`→REP-02; `#factions`→REP-01; `#events`→EVT-01; `#locations`→LOC-01; `#currency/#wallet`→ECO-01; `#rank`→PRG-01; `#companions`→`emit: entity companion`+`#companions`; `#legion/#hierarchy`→REG-08; `#boons`→CAP-01; `#titles`→CAP-02; `#abilities`→CAP-EVO-01; `#needs`→NDS-01; `#inspect`→INS-01; `#system/#ruleset`→SD-01; `#help`→CMD-help-01; custom/alias→CMD-02. (`#<category>s` commands are def-derived — see CAP-01/02.)
 
-**System-Def sections → test IDs:** features→XC-GATE-01; identity/progression→REG-05; creation→CC-01; classes→`emit: system_def` w/ classes (CLS); attributes/derived/variables→XC-FORMULA-01/REG-04; reputation→REP-01; skills→SKL-01; rank_ladder→PRG-01; needs→NDS-02; item_conditions→POS-ITEM-01/REG-11; loyalty→companion tests; resolution→XC-RES-01; quests/world_events/factions/companions/abilities vocab→QST-01/EVT-01/REP-01/REG-08/ABL-01; inventory→POS-BOX-01; equipment→POS-01; locations(+instances)→LOC-01; commands→CMD-02; presentation→XC-PRES-01.
+**System-Def sections → test IDs:** features→XC-GATE-01; identity/progression→REG-05; creation→CC-01; classes→`emit: system_def` w/ classes (CLS); attributes/derived/variables→XC-FORMULA-01/REG-04; reputation→REP-01; capabilities/progressions→CAP-PRG-01/SD-PROG-01; rank_ladder→PRG-01; needs→NDS-02; item_conditions→POS-ITEM-01/REG-11; loyalty→companion tests; resolution→XC-RES-01; rules/emit_rule_entries→SD-RULE-01/02; quests/world_events/factions/companions/capabilities vocab→QST-01/EVT-01/REP-01/REG-08/CAP-01; inventory→POS-BOX-01; equipment→POS-01; locations(+instances)→LOC-01; commands→CMD-02; presentation→XC-PRES-01.
 
-**Header tokens → test IDs:** identity/`{rank}`→HDR-02/05; `{field}/{field_max}/{field_regen}/{field_pct}`→HDR-02/05; `{time}/{date}`→HDR-02; `{conditions}`→HDR-02; `{inventory_count}/{inventory_max}`→HDR-05; `{active_title}/{titles}/{boons}/{abilities}`→HDR-05; `{currency}/{currency:denom}`→HDR-05; `{reputation:Faction}`→HDR-05; `{skill_score:Skill}`→HDR-05; `{xp_next}`→HDR-05.
+**Header tokens → test IDs:** identity/`{rank}`→HDR-02/05; `{field}/{field_max}/{field_regen}/{field_pct}`→HDR-02/05; `{time}/{date}`→HDR-02; `{conditions}`→HDR-02; `{inventory_count}/{inventory_max}`→HDR-05; `{active_title}/{titles}/{boons}/{abilities}`→HDR-05 (resolve against `state.capabilities`); `{currency}/{currency:denom}`→HDR-05; `{reputation:Faction}`→HDR-05; `{skill_score:Skill}`→HDR-05 (reads the capability's precomputed `prog.score`); `{xp_next}`→HDR-05.
 
 ---
 
@@ -242,4 +249,4 @@ Delete `harness-campaign`, `harness-campaign-plot`, and any `location-*` / `npc-
 7. **Derived stats only fill unset/zero targets** — the harness leaves hp/mp/vigor blank deliberately.
 8. **NPC values are reconstructed from lorebook text** — verify NPC tests via the three `[NPC…]` entries' content, not chatMetadata.
 
-The block catalogue inside `test-harness-card.json` duplicates the live protocol; if the extension protocol changes, regenerate the catalogue (canonical templates: `system-designer-card.json`). The harness stamps `protocol_version 0.0.9`.
+The block catalogue inside `test-harness-card.json` duplicates the live protocol; if the extension protocol changes, regenerate the catalogue (canonical templates: `system-designer-card.json`). The harness stamps `protocol_version 0.0.10`.

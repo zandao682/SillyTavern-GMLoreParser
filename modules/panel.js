@@ -72,24 +72,6 @@ function renderField(key, descriptor, values) {
 
 // ── Sub-panel builders ────────────────────────────────────────────────────────
 
-function buildSkillPanelHTML(ss) {
-    if (!ss || !Object.keys(ss.skills).length)
-        return `<div class="glp-skill-panel-empty">No skills recorded. GM emits [SKILL_UPDATE_BEGIN] blocks to add them.</div>`;
-    const tierNames = getTierNames(ss);
-    return Object.values(ss.skills).map(skill => {
-        const tier  = tierNames[skill.tier_idx] || `Tier ${skill.tier_idx + 1}`;
-        const pct   = skill.pp_needed > 0 ? Math.min(100, (skill.pp / skill.pp_needed) * 100) : 0;
-        const score = ss.mode === 'pp' ? `Score ${calcSkillScore(ss, skill)}` : '';
-        return `<div class="glp-skill-row">
-            <div class="glp-skill-name">${skill.name}</div>
-            <div class="glp-skill-tier">${tier} Lv${skill.level}</div>
-            <div class="glp-skill-bar-wrap"><div class="glp-skill-bar" style="width:${pct}%"></div></div>
-            <div class="glp-skill-pp">${skill.pp}/${skill.pp_needed}</div>
-            ${score ? `<div class="glp-skill-score">${score}</div>` : ''}
-        </div>`;
-    }).join('');
-}
-
 function buildDomainPanelHTML(domains) {
     if (!domains || !Object.keys(domains).length) return '';
     return Object.entries(domains).map(([name, domain]) => `
@@ -135,9 +117,10 @@ function buildStatusPanelHTML(state) {
         ? `<span class="glp-world-time">${state.world_time.display}</span>` : '';
 
     const settings     = getSettings();
-    const skillHtml    = settings.showSkillPanel && featureOn('skills') && Object.keys(state.skill_system?.skills || {}).length
-        ? `<details class="glp-skills-details"><summary>Skills (${Object.keys(state.skill_system.skills).length})</summary>
-           <div class="glp-skill-panel">${buildSkillPanelHTML(state.skill_system)}</div></details>` : '';
+    const _capHtml      = featureOn('capabilities') ? buildCapabilityPanelHTML(state.capabilities || {}, settings) : '';
+    const capabilityHtml = _capHtml
+        ? `<details class="glp-boon-details open"><summary>Capabilities</summary>
+           <div class="glp-boon-panel">${_capHtml}</div></details>` : '';
     const domainHtml   = settings.showDomainPanel && featureOn('domains') && Object.keys(state.domains || {}).length
         ? `<details class="glp-domain-details"><summary>Domains</summary>
            <div class="glp-domain-panel">${buildDomainPanelHTML(state.domains)}</div></details>` : '';
@@ -159,10 +142,6 @@ function buildStatusPanelHTML(state) {
     const companionHtml = settings.showCurrencyPanel && featureOn('companions') && Object.keys(state.companions || {}).length
         ? `<details class="glp-companion-details"><summary>Companions</summary>
            <div class="glp-companion-panel">${buildCompanionPanel(state.companions || {})}</div></details>` : '';
-    const ownAbilities = (state.abilities || []).filter(a => a.entity_slug === 'player');
-    const boonHtml = settings.showBoonPanel && featureOn('abilities') && ownAbilities.length
-        ? `<details class="glp-boon-details open"><summary>Abilities &amp; Titles</summary>
-           <div class="glp-boon-panel">${buildAbilityPanelHTML(state.abilities || [], settings)}</div></details>` : '';
     const _invHtml = buildInventoryPanel(state);
     const inventoryHtml = _invHtml
         ? `<details class="glp-inventory-details"><summary>Equipment &amp; Inventory</summary>
@@ -171,9 +150,9 @@ function buildStatusPanelHTML(state) {
         ? `<details class="glp-needs-details open"><summary>Needs</summary>
            <div class="glp-needs-panel">${buildNeedsPanel(state.needs || {}, settings)}</div></details>` : '';
 
-    // Active-title badge for header (exclusive ability category, e.g. title)
-    const _exCat = getSystemDef().abilities?.exclusive_category || 'title';
-    const activeTitle = (state.abilities || []).find(a => a.category === _exCat && a.active && a.entity_slug === 'player');
+    // Active-title badge for header (exclusive capability category, e.g. title)
+    const _exCat = getSystemDef().capabilities?.exclusive_category || 'title';
+    const activeTitle = Object.values(state.capabilities || {}).find(c => c.category === _exCat && c.active && c.entity_slug === 'player');
     const titleBadge  = activeTitle ? `<span class="glp-active-title">${activeTitle.name}</span>` : '';
 
     return `<div id="glp-status-panel" class="glp-status">
@@ -186,7 +165,7 @@ function buildStatusPanelHTML(state) {
             ${timeDisplay}
         </div>
         <div class="glp-groups-container">${sections || '<span class="glp-no-schema">Schema not defined.</span>'}</div>
-        ${needsHtml}${skillHtml}${domainHtml}${questHtml}${repHtml}${eventsHtml}${currencyHtml}${rankHtml}${companionHtml}${inventoryHtml}${boonHtml}
+        ${needsHtml}${capabilityHtml}${domainHtml}${questHtml}${repHtml}${eventsHtml}${currencyHtml}${rankHtml}${companionHtml}${inventoryHtml}
     </div>`;
 }
 

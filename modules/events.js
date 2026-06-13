@@ -71,7 +71,7 @@ async function applyWorldEventBlock(raw, settings) {
 
     // Write to lorebook
     if (settings.campaignLorebook) {
-        const keywords = [fields.title.toLowerCase(), ...(fields.location ? [fields.location.toLowerCase()] : [])];
+        const keywords = normalizeKeys([...expandNameKeys(fields.title), ...(fields.location ? [fields.location] : [])]);
         await upsertEntry(settings.campaignLorebook, {
             ...entryBase(`[World Event] ${event.title}`, keywords, buildEventLoreContent(event), settings.loreOrder, settings, { type: 'WORLD_EVENT', id: event.id }),
         });
@@ -98,7 +98,7 @@ async function applyWorldEventUpdate(raw, settings) {
     if (fields.date)       event.date       = fields.date;
 
     if (settings.campaignLorebook) {
-        const keywords = [event.title.toLowerCase()];
+        const keywords = normalizeKeys([...expandNameKeys(event.title), ...(event.location ? [event.location] : [])]);
         await upsertEntry(settings.campaignLorebook, {
             ...entryBase(`[World Event] ${event.title}`, keywords, buildEventLoreContent(event), settings.loreOrder, settings, { type: 'WORLD_EVENT', id: event.id }),
         });
@@ -119,8 +119,8 @@ async function processPlotEntry(raw, settings) {
     if (!plotBook) { console.warn(`[${MODULE_NAME}] PLOT_ENTRY: no plotLorebook configured`); return false; }
 
     const keywords = fields.keywords
-        ? fields.keywords.split(',').map(k => k.trim()).filter(Boolean)
-        : [fields.title.toLowerCase()];
+        ? normalizeKeys(fields.keywords.split(','))
+        : expandNameKeys(fields.title);
 
     const type    = fields.type || eventsCfg().plot_types[0];
     const summary = fields.summary || fields.description || '';

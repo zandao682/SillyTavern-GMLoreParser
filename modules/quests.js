@@ -55,8 +55,8 @@ async function processQuestBlock(fields, settings) {
     const slug     = slugify(title);
     const state    = getCharState();
     const keywords = fields.keywords
-        ? fields.keywords.split(',').map(k => k.trim()).filter(Boolean)
-        : [title.toLowerCase(), ...(fields.rank ? [fields.rank.toLowerCase() + '-rank quest'] : [])];
+        ? normalizeKeys(fields.keywords.split(','))
+        : expandNameKeys(title);   // rank dropped: "<rank>-rank quest" over-triggered
 
     const quest = {
         title,
@@ -116,7 +116,7 @@ async function applyQuestUpdate(raw, settings) {
 
     if (settings.campaignLorebook) {
         await upsertEntry(settings.campaignLorebook, {
-            ...entryBase(`[Quest] ${title}`, quest.keywords || [title.toLowerCase()],
+            ...entryBase(`[Quest] ${title}`, quest.keywords?.length ? quest.keywords : expandNameKeys(title),
                 buildQuestLoreContent(quest), settings.loreOrder, settings, { type: 'QUEST', slug }),
         });
     }

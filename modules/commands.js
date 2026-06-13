@@ -20,7 +20,6 @@
 var VIEW_REGISTRY = {
     status:     { handler: cmdStatus,     feature: null,          triggers: ['#status', '#character'], label: 'Full character sheet' },
     vitals:     { handler: cmdVitals,     feature: null,          triggers: ['#vitals'],               label: 'HP/MP/resources with regen' },
-    skills:     { handler: cmdSkills,     feature: 'skills',      triggers: ['#skills'],               label: 'Skill list with tiers and PP' },
     inventory:  { handler: cmdInventory,  feature: null,          triggers: ['#inventory', '#bag'],    label: 'Inventory list' },
     equipment:  { handler: (s) => cmdEquipment(s),  feature: 'equipment', triggers: ['#equipment'],    label: 'Equipped items by slot' },
     itembox:    { handler: (s) => cmdItemBox(s),    feature: null, triggers: ['#itembox'],             label: 'Item box contents' },
@@ -31,13 +30,10 @@ var VIEW_REGISTRY = {
     factions:   { handler: (s) => cmdFactions(s),   feature: 'reputation', triggers: ['#factions'],     label: 'Full faction roster with lore' },
     events:     { handler: (s) => cmdEvents(s),     feature: 'world_events', triggers: ['#events'],     label: 'World events log' },
     locations:  { handler: (s) => cmdLocations(s),  feature: null,         triggers: ['#locations'],    label: 'Location types & info' },
-    currency:   { handler: (s) => cmdCurrency(s),   feature: 'currency',   triggers: ['#currency', '#gold'], label: 'Wallet and denominations' },
-    rank:       { handler: (s) => cmdRank(s),       feature: 'ranks',      triggers: ['#rank'],         label: 'Guild / adventurer rank' },
+    currency:   { handler: (s) => cmdCurrency(s),   feature: 'currency',   triggers: ['#currency', '#wallet'], label: 'Wallet and denominations' },
+    rank:       { handler: (s) => cmdRank(s),       feature: 'ranks',      triggers: ['#rank'],         label: 'Current rank on the system ladder' },
     companions: { handler: (s, a) => cmdCompanions(s, a), feature: 'companions', triggers: ['#companions'], arg: true, label: 'Companion roster (optional name filter)' },
     legion:     { handler: (s) => cmdLegion(s),     feature: 'companions', triggers: ['#legion', '#hierarchy'], label: 'Command delegation tree' },
-    boons:      { handler: (s) => cmdBoons(s),      feature: 'abilities',  triggers: ['#boons'],        label: 'Awarded boons' },
-    titles:     { handler: (s) => cmdTitles(s),     feature: 'abilities',  triggers: ['#titles'],       label: 'Earned titles (★ = active)' },
-    abilities:  { handler: (s) => cmdAbilities(s),  feature: 'abilities',  triggers: ['#abilities'],    label: 'All abilities by category' },
     needs:      { handler: (s) => cmdNeeds(s),      feature: 'needs',      triggers: ['#needs'],        label: 'Life-simulation needs meters' },
     inspect:    { handler: (s, a) => cmdInspect(s, a), feature: null,      triggers: ['#inspect'], arg: true, label: 'Inspect a target by awareness tier' },
     system:     { handler: (s) => cmdSystem(s),     feature: null,         triggers: ['#system', '#ruleset'], label: 'System definition & resolution' },
@@ -47,15 +43,42 @@ var VIEW_REGISTRY = {
 // Always available regardless of def.commands or feature gating.
 var ALWAYS_VIEWS = ['status', 'vitals', 'system', 'help'];
 
+/** Capability command views DERIVED from def.capabilities: one per declared
+ *  category (#<category>s) plus #skills (progressing) and #abilities (static),
+ *  all routed to the generic cmdCapabilityView. Returned as registry-shaped
+ *  entries so the System Definition `commands:` section can rename/alias/drop
+ *  them just like any built-in view. */
+function capabilityViewRegistry() {
+    if (!featureOn('capabilities')) return {};
+    const cfg = capabilityCfg();
+    const reg = {};
+    for (const cat of cfg.categories) {
+        const Cap = cat[0].toUpperCase() + cat.slice(1);
+        reg['cap_' + cat] = {
+            handler: (s) => cmdCapabilityView(s, { category: cat }),
+            feature: 'capabilities', triggers: ['#' + cat + 's'],
+            label: `${Cap} list`,
+        };
+    }
+    // Cross-cutting views (override any same-named category trigger; last wins).
+    reg.skills    = { handler: (s) => cmdCapabilityView(s, { progressing: true }), feature: 'capabilities', triggers: ['#skills'],    label: 'Progressing capabilities (skills)' };
+    reg.abilities = { handler: (s) => cmdCapabilityView(s, { static: true }),      feature: 'capabilities', triggers: ['#abilities'], label: 'Static capabilities (abilities)' };
+    return reg;
+}
+
+/** The full view registry for this turn: built-ins plus def-derived capability views. */
+function allViews() { return { ...VIEW_REGISTRY, ...capabilityViewRegistry() }; }
+
 /** Build the active { trigger → {handler, arg} } map plus a help list, per the
  *  active System Definition. Recomputed each call (cheap; getSystemDef is cached). */
 function buildActiveCommands() {
     const def  = getSystemDef();
     const map  = {};
     const help = [];
+    const REG  = allViews();
 
     const addView = (viewId, triggers, label) => {
-        const v = VIEW_REGISTRY[viewId];
+        const v = REG[viewId];
         if (!v) return;
         if (v.feature && !featureOn(v.feature) && !ALWAYS_VIEWS.includes(viewId)) return;
         const trigs = (triggers && triggers.length ? triggers : v.triggers).map(t => t.toLowerCase());
@@ -66,7 +89,7 @@ function buildActiveCommands() {
     if (Array.isArray(def.commands) && def.commands.length) {
         // System-defined set: each entry aliases a view or defines a template command.
         for (const c of def.commands) {
-            if (c.view && VIEW_REGISTRY[c.view]) addView(c.view, c.triggers, c.label);
+            if (c.view && REG[c.view]) addView(c.view, c.triggers, c.label);
             else if (c.template) {
                 for (const t of c.triggers.map(x => x.toLowerCase()))
                     map[t] = { handler: (s) => renderStateTemplate(c.template, s), arg: false };
@@ -77,7 +100,7 @@ function buildActiveCommands() {
         for (const v of ALWAYS_VIEWS) if (!def.commands.some(c => c.view === v)) addView(v);
     } else {
         // Default: every registry view under its default triggers, feature-gated.
-        for (const viewId of Object.keys(VIEW_REGISTRY)) addView(viewId);
+        for (const viewId of Object.keys(REG)) addView(viewId);
     }
     return { map, help };
 }
@@ -124,11 +147,15 @@ function cmdStatus(state) {
 function cmdVitals(state) {
     const v    = state.values;
     const sf   = state.schema?.fields || {};
-    const vitals = ['hp', 'mp', 'vigor', 'stamina', 'mana', 'vitality'];
     const lines = ['[Vitals]'];
     for (const [key, desc] of Object.entries(sf)) {
-        if (!vitals.includes(key) && desc.group !== 'vitals') continue;
-        if (isMaxFieldOf(key, sf)) continue;
+        if (isMaxFieldOf(key, sf) || isUsesCounterOf(key, sf)) continue;
+        // A "vital" is any resource-like field — schema-driven, not a fixed name
+        // list: a bar/pool, one with a max, one that regenerates, or anything the
+        // system explicitly grouped under 'vitals'.
+        const isVital = desc.group === 'vitals' || desc.type === 'bar' || desc.type === 'pool'
+                        || !!desc.max_field || !!desc.regen;
+        if (!isVital) continue;
         const val = v[key]; if (val === undefined) continue;
         const rpm      = regenPerMinute(desc);
         const regenStr = rpm ? ` ${formatRegenDisplay(rpm)}` : '';
@@ -136,27 +163,6 @@ function cmdVitals(state) {
         lines.push(`  ${desc.label || key}: ${val}${maxStr}${regenStr}`);
     }
     if (state.world_time?.display) lines.push(`  Time: ${state.world_time.display}`);
-    return lines.join('\n');
-}
-
-function cmdSkills(state) {
-    const ss = state.skill_system;
-    if (!ss || !Object.keys(ss.skills).length) return '[Skills]\nNo skills recorded yet.';
-    const tierNames = getTierNames(ss);
-    const lines = ['[Skills]'];
-    for (const [, skill] of Object.entries(ss.skills)) {
-        const tier = tierNames[skill.tier_idx] || `Tier ${skill.tier_idx + 1}`;
-        if (ss.mode === 'pp') {
-            const score = calcSkillScore(ss, skill);
-            lines.push(`  ${skill.name}: ${tier} Lv${skill.level} | PP ${skill.pp}/${skill.pp_needed} | Score ${score}`);
-        } else {
-            lines.push(`  ${skill.name}: Lv${skill.level} (${skill.pp || 0}/${skill.pp_needed || 0})`);
-        }
-    }
-    if (ss.branch_unlocks.length) {
-        lines.push('\n[Branch Skills Unlocked]');
-        for (const b of ss.branch_unlocks) lines.push(`  [${b.branch}] (${b.skill})`);
-    }
     return lines.join('\n');
 }
 
@@ -207,11 +213,14 @@ function renderStateTemplate(format, state) {
         if (t === 'time' || t === 'date') return state.world_time?.display || '—';
         if (t === 'conditions') return Array.isArray(v.conditions) && v.conditions.length ? v.conditions.join(', ') : presentationCfg().empty_label;
         if (t === 'currency')   { const c = state.currency || {}; const p = Object.entries(c).filter(([, n]) => n > 0).map(([d, n]) => `${n} ${d}`); return p.length ? p.join(', ') : '—'; }
-        if (t === 'active_title') { const a = (state.abilities || []).find(x => x.category === (getSystemDef().abilities?.exclusive_category || 'title') && x.active); return a ? a.name : '—'; }
+        if (t === 'active_title') {
+            const exCat = capabilityCfg().exclusive_category;
+            const c = Object.values(state.capabilities || {}).find(x => x.category === exCat && x.active && x.entity_slug === 'player');
+            return c ? c.name : '—';
+        }
         if (t.startsWith('skill_score:')) {
-            const ss = state.skill_system; if (!ss) return '?';
-            const sk = ss.skills?.[t.slice(12).trim().toLowerCase().replace(/\s+/g, '-')];
-            return sk ? calcSkillScore(ss, sk) : '?';
+            const cap = findCapability(state, 'player', t.slice(12).trim());
+            return cap?.prog ? cap.prog.score : '?';
         }
         if (t.endsWith('_regen')) return formatRegenDisplay(regenPerMinute(sf[t.slice(0, -6)]));
         if (t.endsWith('_max')) {
@@ -247,11 +256,6 @@ function cmdInspect(state, targetName) {
     if (!targetName) return '[Inspect]\nUsage: #inspect <target name>';
 
     const query = targetName.toLowerCase();
-    const ss    = state.skill_system;
-
-    let awareTier = 0;
-    const awSkill = ss?.skills?.['awareness'] || ss?.skills?.['Awareness'];
-    if (awSkill) awareTier = awSkill.tier_idx ?? 0;
 
     const hints = [];
     for (const ev of state.world_events || []) {
@@ -263,14 +267,19 @@ function cmdInspect(state, targetName) {
             hints.push(`Quest link: ${q.title}`);
     }
 
-    const tierLabel = (ss?.tier_names || getSystemDef().skills?.tier_names || DEFAULT_TIER_NAMES)[awareTier] || `Tier ${awareTier + 1}`;
-    const lines = [`[Inspect: ${targetName}]`, `Awareness tier: ${tierLabel}`];
-    if (!hints.length) {
-        lines.push('No local data found. Ask the GM for more details.');
-    } else {
-        if (awareTier < 2) lines.push('(Limited awareness — only surface details visible)');
-        lines.push(...hints);
+    const lines = [`[Inspect: ${targetName}]`];
+    // Optional perception gating: a system may name a capability whose tier limits
+    // inspect detail (def.capabilities.inspect_capability). Absent → no gating.
+    const inspectCapName = capabilityCfg().inspect_capability;
+    const awCap = inspectCapName ? findCapability(state, 'player', inspectCapName) : null;
+    if (awCap?.prog) {
+        const tier      = awCap.prog.tier_idx ?? 0;
+        const tierLabel = progTierNames(getProgression(awCap))[tier] || `Tier ${tier + 1}`;
+        lines.push(`${awCap.name} tier: ${tierLabel}`);
+        if (tier < 2 && hints.length) lines.push('(Limited awareness — only surface details visible)');
     }
+    if (!hints.length) lines.push('No local data found. Ask the GM for more details.');
+    else lines.push(...hints);
     return lines.join('\n');
 }
 

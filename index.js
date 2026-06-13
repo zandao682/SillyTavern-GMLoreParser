@@ -1,10 +1,10 @@
 /**
- * GM Lore Parser — SillyTavern Extension  v0.0.9 (beta)
+ * GM Lore Parser — SillyTavern Extension  v0.0.10 (beta)
  *
  * Entry point only. All logic lives in modules/. Load order matters:
- * state → utils → lorebook → system → schema → entity → companions →
- *   progression → inventory → skills → domain → lore → sheet → creation →
- *   quests → reputation → events → currency → abilities → needs →
+ * state → utils → lorebook → system → schema → entity → progression →
+ *   inventory → capabilities → domain → lore → sheet → creation →
+ *   quests → reputation → events → currency → needs →
  *   commands → panel → context
  *
  * To add a new block type:
@@ -15,7 +15,7 @@
  */
 
 var MODULE_NAME = 'gm-lore-parser';
-var VERSION     = '0.0.9';
+var VERSION     = '0.0.10';
 
 // ── Module loader ─────────────────────────────────────────────────────────────
 
@@ -25,11 +25,10 @@ var GLP_MODULE_LOAD_ORDER = [
     'lorebook',   // lorebook CRUD helpers
     'system',     // system definition (ruleset) — getSystemDef, evalFormula
     'schema',     // schema engine (applyFieldValue, regen, promotions)
-    'entity',     // unified entity core (player/npc/companion/creature) + dispatcher
-    'companions', // companion entity-type rules (loyalty, control, AP, legion)
+    'entity',     // unified entity core + all type rules (player/npc/companion/creature)
     'progression',// rank ladders + XP awards
     'inventory',  // equipment slots, inventory model, item box
-    'skills',     // skill system (PP + use_tracked)
+    'capabilities',// unified capabilities (static + progressing; def-driven progression)
     'domain',     // domain sub-game
     'lore',       // npc storage internals, item, location, generic lore handlers
     'sheet',      // player sheet + world time
@@ -38,7 +37,6 @@ var GLP_MODULE_LOAD_ORDER = [
     'reputation', // faction reputation
     'events',     // world events + plot lorebook
     'currency',   // pure wealth tracking
-    'abilities',  // unified abilities (boon/title/passive/trait/evolution)
     'needs',      // life simulation needs meters
     'commands',   // # command interceptor
     'panel',      // status panel rendering
@@ -146,16 +144,12 @@ async function onMessageReceived(messageId) {
     for (const b of extractBlocks(text, SHEET_BLOCKS.ENTITY_MEMORY.begin, SHEET_BLOCKS.ENTITY_MEMORY.end))
         if (await onEntityMemory(b.raw, settings)) loreSaved++;
 
-    if (featureOn('abilities'))
-    for (const b of extractBlocks(text, SHEET_BLOCKS.ABILITY.begin, SHEET_BLOCKS.ABILITY.end))
-        { if (await processAbilityBlock(parseFields(b.raw), settings)) sheetChanged = true; }
+    if (featureOn('capabilities')) {
+    for (const b of extractBlocks(text, SHEET_BLOCKS.CAPABILITY.begin, SHEET_BLOCKS.CAPABILITY.end))
+        { if (await processCapabilityBlock(parseFields(b.raw), settings)) sheetChanged = true; }
 
-    if (featureOn('skills')) {
-    for (const b of extractBlocks(text, SHEET_BLOCKS.SKILL_SYSTEM.begin, SHEET_BLOCKS.SKILL_SYSTEM.end))
-        { applySkillSystemConfig(b.raw); sheetChanged = true; }
-
-    for (const b of extractBlocks(text, SHEET_BLOCKS.SKILL_UPDATE.begin, SHEET_BLOCKS.SKILL_UPDATE.end)) {
-        const n = applySkillUpdate(b.raw);
+    for (const b of extractBlocks(text, SHEET_BLOCKS.CAPABILITY_UPDATE.begin, SHEET_BLOCKS.CAPABILITY_UPDATE.end)) {
+        const n = applyCapabilityUpdate(b.raw);
         if (n.length) { sheetChanged = true; for (const x of n) notifications.push({ type: x.type, msg: x.msg }); }
     }
     }
@@ -371,7 +365,7 @@ async function renderSettingsPanel() {
         <div class="glp-field-setting"><label>Rule order</label><input  type="number" id="glp-rule-order"  class="text_pole" min="1" max="999" value="${settings.ruleOrder}"></div>
       </div>
       <div class="glp-info">
-        <b>v0.0.9 (beta) — modular build.</b> Modules: state · utils · lorebook · system · schema · entity · companions · progression · inventory · skills · domain · lore · sheet · creation · quests · reputation · events · currency · abilities · needs · commands · panel · context<br>
+        <b>v0.0.10 (beta) — modular build.</b> Modules: state · utils · lorebook · system · schema · entity · progression · inventory · capabilities · domain · lore · sheet · creation · quests · reputation · events · currency · needs · commands · panel · context<br>
         <b>Skill modes:</b> pp (multi-tier, configurable) · use_tracked (threshold counter)<br>
         <b>Add a block type:</b> edit modules/state.js (registry) + add handler in the appropriate module
       </div>

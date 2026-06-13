@@ -42,11 +42,10 @@ var SHEET_BLOCKS = {
     ENTITY_UPDATE: { begin: '[ENTITY_UPDATE_BEGIN]', end: '[ENTITY_UPDATE_END]' },
     ENTITY_EVENT:  { begin: '[ENTITY_EVENT_BEGIN]',  end: '[ENTITY_EVENT_END]'  },
     ENTITY_MEMORY: { begin: '[ENTITY_MEMORY_BEGIN]', end: '[ENTITY_MEMORY_END]' },
-    // ── Abilities (boon / title / passive / trait / evolution) ──────────────────
-    ABILITY:           { begin: '[ABILITY_BEGIN]',          end: '[ABILITY_END]'           },
+    // ── Capabilities (boon/title/passive/trait/evolution/skill — static or progressing) ──
+    CAPABILITY:        { begin: '[CAPABILITY_BEGIN]',        end: '[CAPABILITY_END]'        },
+    CAPABILITY_UPDATE: { begin: '[CAPABILITY_UPDATE_BEGIN]', end: '[CAPABILITY_UPDATE_END]' },
     WORLD_TIME:        { begin: '[WORLD_TIME_BEGIN]',        end: '[WORLD_TIME_END]'        },
-    SKILL_UPDATE:      { begin: '[SKILL_UPDATE_BEGIN]',      end: '[SKILL_UPDATE_END]'      },
-    SKILL_SYSTEM:      { begin: '[SKILL_SYSTEM_BEGIN]',      end: '[SKILL_SYSTEM_END]'      },
     DOMAIN_UPDATE:     { begin: '[DOMAIN_UPDATE_BEGIN]',     end: '[DOMAIN_UPDATE_END]'     },
     REPUTATION_UPDATE: { begin: '[REPUTATION_UPDATE_BEGIN]', end: '[REPUTATION_UPDATE_END]' },
     WORLD_EVENT:       { begin: '[WORLD_EVENT_BEGIN]',       end: '[WORLD_EVENT_END]'       },
@@ -101,18 +100,7 @@ var DEFAULT_CHAR_STATE = Object.freeze({
     values: {},
     world_time: { display: '', elapsed_minutes: 0 },
     attr_change_log: [],
-    skill_system: {
-        mode: 'use_tracked',
-        // tier_names / levels_per_tier / formulas are null → resolved from the
-        // active System Definition (getSystemDef().skills) at use-time. A per-chat
-        // [SKILL_SYSTEM] block can still set explicit overrides here.
-        tier_names: null,
-        levels_per_tier: null,
-        pp_per_level_formula: null,
-        score_formula: null,
-        skills: {},
-        branch_unlocks: [],
-    },
+    capabilities: {},     // id → unified capability record (see modules/capabilities.js)
     domains: {},
     // ── v3 additions ──────────────────────────────────────────────────────
     quests: {},           // slug → { title, rank, category, status, objectives[], rewards, notes, history[] }
@@ -123,7 +111,6 @@ var DEFAULT_CHAR_STATE = Object.freeze({
     companions: {},       // slug → { name, type, control_cost, loyalty, status, notes, ap_unspent, ap_total, attributes, role }
     adventurer_rank: { rank: 'F', rank_ladder: null, quest_count: 0, history: [] },
     // ── v4 additions ──────────────────────────────────────────────────────
-    abilities: [],        // [{ id, name, category, activation, description, effects, entity_slug, active, stat_changes, keywords[] }]
     needs: {},            // meter_name → { value, max, label, warn_threshold, critical_threshold }
     char_creation: {      // interactive creation session
         active: false,
@@ -134,7 +121,7 @@ var DEFAULT_CHAR_STATE = Object.freeze({
     system_def: null,     // active ruleset (see modules/system.js); null → DEFAULT_SYSTEM_DEF
     equipment: {},        // slot_key → item name   (see modules/inventory.js)
     item_box: [],         // [{ item, condition }]  optional extradimensional container
-    schema_version: 5,
+    schema_version: 6,
 });
 
 // ── State accessors ───────────────────────────────────────────────────────────
@@ -158,9 +145,7 @@ function getCharState() {
     if (!s.values)          s.values          = {};
     if (!s.world_time)      s.world_time      = structuredClone(DEFAULT_CHAR_STATE.world_time);
     if (!s.attr_change_log) s.attr_change_log = [];
-    if (!s.skill_system)     s.skill_system     = structuredClone(DEFAULT_CHAR_STATE.skill_system);
     if (!s.domains)          s.domains          = {};
-    // v3 migration
     if (!s.quests)           s.quests           = {};
     if (!s.factions)         s.factions         = {};
     if (!s.reputation)       s.reputation       = {};
@@ -168,33 +153,13 @@ function getCharState() {
     if (!s.currency)         s.currency         = {};
     if (!s.companions)       s.companions       = {};
     if (!s.adventurer_rank)  s.adventurer_rank  = structuredClone(DEFAULT_CHAR_STATE.adventurer_rank);
-    // v4 migration
-    if (!s.abilities)        s.abilities        = [];
     if (!s.needs)            s.needs            = {};
     if (!s.char_creation)    s.char_creation    = structuredClone(DEFAULT_CHAR_STATE.char_creation);
-    // per-companion v4 fields
-    for (const c of Object.values(s.companions || {})) {
-        if (c.ap_unspent  === undefined) c.ap_unspent  = 0;
-        if (c.ap_total    === undefined) c.ap_total    = 0;
-        if (!c.attributes)               c.attributes  = {};
-        if (!c.role)                     c.role        = 'standard';
-    }
-    // v5 migration
     if (s.system_def === undefined) s.system_def = null;
     if (!s.equipment) s.equipment = {};
     if (!s.item_box)  s.item_box  = [];
-    if (!s.abilities) s.abilities = [];
-    // Fold any pre-v5 boons/titles into the unified abilities list
-    for (const b of (s.boons || []))
-        s.abilities.push({ id: `boon:player:${(b.name||'').toLowerCase().replace(/\s+/g,'-')}`, name: b.name, category: 'boon',
-            activation: b.activation || 'always', description: b.description || '', effects: b.effects || '',
-            entity_slug: 'player', active: true, stat_changes: '', keywords: b.keywords || [b.name] });
-    for (const t of (s.titles || []))
-        s.abilities.push({ id: `title:player:${(t.name||'').toLowerCase().replace(/\s+/g,'-')}`, name: t.name, category: 'title',
-            activation: 'always', description: t.description || '', effects: '', entity_slug: 'player',
-            active: !!t.active, stat_changes: '', keywords: t.keywords || [t.name] });
-    delete s.boons; delete s.titles;
-    if (!s.schema_version || s.schema_version < 5) s.schema_version = 5;
+    if (!s.capabilities) s.capabilities = {};
+    if (!s.schema_version || s.schema_version < 6) s.schema_version = 6;
     return s;
 }
 

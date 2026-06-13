@@ -20,16 +20,18 @@ var SYSTEM_DEF_COMMENT = '[System Definition]';
 var FORMULA_SAFE_RE    = /^[\d\s+\-*/().]+$/;
 
 var ALL_FEATURES = [
-    'skills', 'ranks', 'reputation', 'currency', 'needs',
-    'companions', 'domains', 'quests', 'abilities', 'world_events', 'equipment',
+    'capabilities', 'ranks', 'reputation', 'currency', 'needs',
+    'companions', 'domains', 'quests', 'world_events', 'equipment',
 ];
 
 var DEFAULT_SYSTEM_DEF = Object.freeze({
     name: 'Default (Veridia)',
-    schema_version: 5,
+    schema_version: 6,
+    emit_rule_entries: true,         // generate keyword-triggered [System Rule] lorebook entries
+    rules: null,                     // optional per-rule author overrides (keys/content); null → derived defaults
     features: Object.freeze({
-        skills: true, ranks: true, reputation: true, currency: true, needs: true,
-        companions: true, domains: true, quests: true, abilities: true, world_events: true,
+        capabilities: true, ranks: true, reputation: true, currency: true, needs: true,
+        companions: true, domains: true, quests: true, world_events: true,
     }),
     identity: Object.freeze({
         fields: Object.freeze([
@@ -63,13 +65,26 @@ var DEFAULT_SYSTEM_DEF = Object.freeze({
         scale_min: 0, scale_max: 100, initial: 50,
         tiers: Object.freeze(['Hostile', 'Cold', 'Neutral', 'Friendly', 'Allied', 'Sworn']),
     }),
-    skills: Object.freeze({
-        enabled: true, leveled: true,
-        tier_names: null,            // null → fall back to DEFAULT_TIER_NAMES
-        levels_per_tier: 10,
-        pp_per_level_formula: '100 * tier_rank',
-        score_formula: '10 + total_levels * 2.5',
+    // ── Capabilities (unified abilities + skills) ──
+    capabilities: Object.freeze({
+        categories: Object.freeze(['boon', 'title', 'passive', 'trait', 'evolution', 'skill']),
+        default_category: 'boon', default_activation: 'always', exclusive_category: 'title',
+        // category → progression-profile id (anything unlisted = 'none')
+        category_progression: Object.freeze({ skill: 'veridia_pp' }),
+        // capability whose tier gates #inspect detail (null → no perception gating)
+        inspect_capability: 'awareness',
     }),
+    // ── Progression profiles a capability can reference (Veridia PP/tier is one of them) ──
+    progressions: Object.freeze([
+        Object.freeze({ id: 'none', type: 'none' }),
+        Object.freeze({ id: 'veridia_pp', type: 'points_tiers', tier_names: null, levels_per_tier: 10,
+            cost_formula: '100 * tier_rank', score_formula: '10 + total_levels * 2.5', points_label: 'PP' }),
+        Object.freeze({ id: 'use_tracked', type: 'use_tracked', threshold: 5, score_formula: 'skill_level' }),
+        Object.freeze({ id: 'simple_level', type: 'counter', score_formula: 'skill_level' }),
+        Object.freeze({ id: 'xp_rank', type: 'xp_levels', tier_names: null, levels_per_tier: 10,
+            cost_formula: '50 * (skill_level + 1)', score_formula: 'skill_level' }),
+        Object.freeze({ id: 'milestone', type: 'milestone', tier_names: null }),
+    ]),
     rank_ladder: null,               // null → fall back to RANK_LADDER
     needs: Object.freeze({ warn_threshold: 30, critical_threshold: 10 }),
     item_conditions: null,           // null → fall back to ITEM_CONDITIONS
@@ -103,10 +118,6 @@ var DEFAULT_SYSTEM_DEF = Object.freeze({
         roles:    Object.freeze(['standard', 'lieutenant']),
         statuses: Object.freeze(['Active', 'Inactive', 'Dismissed', 'Dead']),
         default_role: 'standard', lieutenant_role: 'lieutenant', default_status: 'Active',
-    }),
-    abilities: Object.freeze({
-        categories: Object.freeze(['boon', 'title', 'passive', 'trait', 'evolution']),
-        default_category: 'boon', default_activation: 'always', exclusive_category: 'title',
     }),
 
     // ── Possessions (configurable; optional) ──
@@ -231,6 +242,26 @@ function parseSystemDef(raw) {
 
     if (sec.name) parsed.name = sec.name.inline || sec.name.lines.join(' ') || DEFAULT_SYSTEM_DEF.name;
 
+    if (sec.emit_rule_entries) parsed.emit_rule_entries = _bool(sec.emit_rule_entries.inline, true);
+
+    // rules: per-rule author overrides — `rule: <id>` opens an entry; indented
+    // `keywords:` (added to derived keys) and `content:` (replaces derived prose).
+    if (sec.rules) {
+        const rules = {};
+        let cur = null, curId = null;
+        for (const l of sec.rules.lines) {
+            const m = l.match(/^rule\s*:(.*)$/i);
+            if (m) { curId = slugify(m[1].trim()); cur = { keywords: [], content: '' }; if (curId) rules[curId] = cur; }
+            else if (cur) {
+                const c = l.indexOf(':'); if (c === -1) continue;
+                const k = l.slice(0, c).trim().toLowerCase(), v = l.slice(c + 1).trim();
+                if (k === 'keywords')     cur.keywords = _csv(v);
+                else if (k === 'content') cur.content = v;
+            }
+        }
+        if (Object.keys(rules).length) parsed.rules = rules;
+    }
+
     // features: flat comma list of ENABLED features; anything omitted → false
     if (sec.features) {
         const enabled = new Set(_csv(sec.features.inline || sec.features.lines.join(',')).map(s => s.toLowerCase()));
@@ -351,16 +382,63 @@ function parseSystemDef(raw) {
         if (!parsed.reputation.tiers.length) parsed.reputation.tiers = DEFAULT_SYSTEM_DEF.reputation.tiers.slice();
     }
 
-    if (sec.skills) {
-        const kv = _kvLines(sec.skills.lines);
-        parsed.skills = {
-            enabled: _bool(kv.enabled, true),
-            leveled: _bool(kv.leveled, true),
-            tier_names: kv.tiers ? _csv(kv.tiers) : null,
-            levels_per_tier: parseInt(kv.levels_per_tier) || 10,
-            pp_per_level_formula: kv.pp_per_level || DEFAULT_SYSTEM_DEF.skills.pp_per_level_formula,
-            score_formula: kv.score || kv.score_formula || DEFAULT_SYSTEM_DEF.skills.score_formula,
+    // capabilities: vocabulary + per-category progression-profile mapping
+    if (sec.capabilities) {
+        const kv = _kvLines(sec.capabilities.lines.filter(l => !/^category_progression\s*:/i.test(l)));
+        const dc = DEFAULT_SYSTEM_DEF.capabilities;
+        const catProg = {};
+        for (const l of sec.capabilities.lines) {
+            const m = l.match(/^category_progression\s*:(.*)$/i);
+            if (!m) continue;
+            for (const pair of _csv(m[1])) {
+                const [cat, prog] = pair.split(':').map(s => s.trim());
+                if (cat) catProg[cat.toLowerCase()] = (prog || 'none').toLowerCase();
+            }
+        }
+        parsed.capabilities = {
+            categories: kv.categories ? _csv(kv.categories).map(s => s.toLowerCase()) : dc.categories.slice(),
+            default_category:   (kv.default_category   || dc.default_category).toLowerCase(),
+            default_activation: kv.default_activation || dc.default_activation,
+            exclusive_category: kv.exclusive_category !== undefined
+                ? (kv.exclusive_category.toLowerCase() || null)
+                : dc.exclusive_category,
+            category_progression: Object.keys(catProg).length ? catProg : { ...dc.category_progression },
+            inspect_capability: kv.inspect_capability !== undefined
+                ? (kv.inspect_capability.trim().toLowerCase() || null)
+                : dc.inspect_capability,
         };
+    }
+
+    // progressions: `profile: <id> | <type>` opens a profile; indented props follow
+    if (sec.progressions) {
+        const profiles = [];
+        let cur = null;
+        for (const l of sec.progressions.lines) {
+            const m = l.match(/^profile\s*:(.*)$/i);
+            if (m) {
+                const [id, type] = m[1].split('|').map(s => s.trim());
+                // keep underscores — profile ids are identifiers (veridia_pp, use_tracked, …)
+                const pid = String(id || '').toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_|_$/g, '');
+                cur = { id: pid, type: (type || 'none').toLowerCase() };
+                if (cur.id) profiles.push(cur);
+            } else if (cur) {
+                const c = l.indexOf(':'); if (c === -1) continue;
+                const k = l.slice(0, c).trim().toLowerCase(), v = l.slice(c + 1).trim();
+                if (k === 'tier_names')        cur.tier_names = _csv(v);
+                else if (k === 'levels_per_tier') cur.levels_per_tier = parseInt(v) || 10;
+                else if (k === 'cost_formula')    cur.cost_formula = v;
+                else if (k === 'score_formula')   cur.score_formula = v;
+                else if (k === 'threshold')       cur.threshold = parseFloat(v) || 0;
+                else if (k === 'points_label')    cur.points_label = v;
+            }
+        }
+        if (profiles.length) {
+            // merge over the built-in profiles so authored entries override by id
+            const byId = {};
+            for (const p of DEFAULT_SYSTEM_DEF.progressions) byId[p.id] = structuredClone(p);
+            for (const p of profiles) byId[p.id] = { ...byId[p.id], ...p };
+            parsed.progressions = Object.values(byId);
+        }
     }
 
     if (sec.rank_ladder) {
@@ -442,16 +520,6 @@ function parseSystemDef(raw) {
             default_status:  kv.default_status  || DEFAULT_SYSTEM_DEF.companions.default_status,
         };
     }
-    if (sec.abilities) {
-        const kv = _kvLines(sec.abilities.lines);
-        parsed.abilities = {
-            categories: kv.categories ? _csv(kv.categories) : DEFAULT_SYSTEM_DEF.abilities.categories.slice(),
-            default_category:   kv.default_category   || DEFAULT_SYSTEM_DEF.abilities.default_category,
-            default_activation: kv.default_activation || DEFAULT_SYSTEM_DEF.abilities.default_activation,
-            exclusive_category: kv.exclusive_category || DEFAULT_SYSTEM_DEF.abilities.exclusive_category,
-        };
-    }
-
     // ── Possessions ──
     if (sec.inventory) {
         const kv = _kvLines(sec.inventory.lines);
@@ -541,7 +609,7 @@ function mergeWithDefaults(partial) {
         else if (typeof v === 'object') base[k] = { ...base[k], ...v };
         else base[k] = v;
     }
-    base.schema_version = 5;
+    base.schema_version = 6;
     return base;
 }
 
@@ -558,6 +626,13 @@ async function saveSystemDef(def, settings) {
             { type: 'SYSTEM_DEF', system_def: def });
         entry.constant = true;   // always in context
         await upsertEntry(settings.campaignLorebook, entry);
+
+        // Detailed mechanics as keyword-triggered [System Rule] entries (on demand).
+        if (def.emit_rule_entries !== false) {
+            for (const re of buildSystemRuleEntries(def, settings))
+                await upsertEntry(settings.campaignLorebook, re);
+        }
+        await pruneSystemRuleEntries(def, settings);   // drop stale rules (feature off / disabled emit)
     }
     console.log(`[${MODULE_NAME}] System definition saved: ${def.name}`);
 }
@@ -578,6 +653,137 @@ async function loadSystemDefFromLorebook(settings) {
     }
 }
 
+// ── Def-driven [System Rule] entries ────────────────────────────────────────
+// Detailed mechanics are surfaced on demand as keyword-triggered lorebook
+// entries instead of bloating the always-on summary. Each rule's trigger keys
+// are DERIVED from the vocabulary the def itself introduces (tier names, rank
+// labels, attitudes, need meters, dice/mechanic tokens, …) plus a few universal
+// terms — so a rule fires on the system's own words. A `rules:` section in the
+// System Definition may add keywords or replace the prose per rule.
+
+var SYSTEM_RULE_COMMENT = '[System Rule]';
+
+/** Normalize + drop stopwords/too-short tokens (keeps multi-word phrases). */
+function _ruleKeys(arr) {
+    return normalizeKeys(arr).filter(k => k.length >= 2 && !KEY_STOPWORDS.has(k));
+}
+
+/** Distinctive single words from a free-text phrase (e.g. a resolution mechanic). */
+function _phraseTokens(str) {
+    return String(str || '').toLowerCase().match(/[a-z0-9][a-z0-9+-]{1,}/g) || [];
+}
+
+/** Build the candidate [System Rule] entries for a def (before feature gating
+ *  and author overrides are applied). Returns [{ id, name, gate, keys[], content }]. */
+function _ruleDescriptors(def) {
+    const out = [];
+    const r = def.resolution || {};
+    if (r.mechanic) {
+        const keys = _ruleKeys([
+            r.dice, ...(r.dice ? [] : []),
+            ..._phraseTokens(r.mechanic).filter(w => /^(d\d+|dc|\d+d\d+)$/.test(w) || w.length >= 4),
+            'check', 'contest', 'roll', 'difficulty',
+        ]);
+        const lines = [`[Resolution]`, `Mechanic: ${r.mechanic}`];
+        if (r.difficulty) lines.push(`Difficulty: ${r.difficulty}`);
+        if (r.crit)       lines.push(`Crits: ${r.crit}`);
+        if (r.notes)      lines.push(r.notes);
+        out.push({ id: 'resolution', name: 'Resolution', gate: () => !!r.mechanic, keys, content: lines.join('\n') });
+    }
+
+    if (def.features.capabilities !== false && def.capabilities) {
+        const cats = def.capabilities.categories || [];
+        const tierNames = new Set();
+        for (const p of (def.progressions || [])) {
+            if (p.type === 'none') continue;
+            // tier_names:null means the profile uses the built-in ladder at runtime
+            const tn = p.tier_names || (['points_tiers', 'xp_levels', 'milestone'].includes(p.type) ? DEFAULT_TIER_NAMES : []);
+            for (const t of tn) tierNames.add(t);
+        }
+        const keys = _ruleKeys([...cats, ...tierNames, 'skill', 'ability', 'capability', 'mastery', 'tier']);
+        const lines = ['[Capabilities]', `Categories: ${cats.join(', ')}`];
+        for (const p of (def.progressions || [])) {
+            if (p.type === 'none') continue;
+            const tn = p.tier_names ? ` — tiers: ${p.tier_names.join(' < ')}` : '';
+            lines.push(`Progression "${p.id}" (${p.type})${p.levels_per_tier ? `, ${p.levels_per_tier}/tier` : ''}${tn}`);
+        }
+        const cp = def.capabilities.category_progression || {};
+        if (Object.keys(cp).length) lines.push(`Category → progression: ${Object.entries(cp).map(([c, p]) => `${c}:${p}`).join(', ')}`);
+        out.push({ id: 'capabilities', name: 'Capabilities', gate: () => def.features.capabilities !== false, keys, content: lines.join('\n') });
+    }
+
+    if (def.features.reputation !== false && def.reputation?.tiers?.length) {
+        const rep = def.reputation;
+        const att = def.factions?.attitudes || [];
+        const keys = _ruleKeys([...rep.tiers, ...att, 'reputation', 'standing', 'attitude']);
+        const lines = ['[Reputation]', `Scale ${rep.scale_min}-${rep.scale_max}, initial ${rep.initial}`,
+            `Tiers: ${rep.tiers.join(' < ')}`];
+        if (att.length) lines.push(`Faction attitudes: ${att.join(', ')}`);
+        out.push({ id: 'reputation', name: 'Reputation', gate: () => def.features.reputation !== false, keys, content: lines.join('\n') });
+    }
+
+    if (def.features.ranks !== false) {
+        const ladder = def.rank_ladder || RANK_LADDER;
+        const keys = _ruleKeys([...ladder, 'rank', 'guild', 'adventurer']);
+        out.push({ id: 'ranks', name: 'Ranks', gate: () => def.features.ranks !== false,
+            keys, content: ['[Ranks]', `Ladder: ${ladder.join(' < ')}`].join('\n') });
+    }
+
+    if (def.features.companions !== false && def.companions) {
+        const c = def.companions;
+        const keys = _ruleKeys([...(c.roles || []), c.lieutenant_role, 'companion', 'loyalty', 'control']);
+        const ly = def.loyalty || {};
+        out.push({ id: 'companions', name: 'Companions', gate: () => def.features.companions !== false, keys,
+            content: ['[Companions]', `Roles: ${(c.roles || []).join(', ')}`,
+                `Lieutenants (${c.lieutenant_role}) raise the control limit.`,
+                `Loyalty scale ${ly.scale_min ?? 0}-${ly.scale_max ?? 100}, initial ${ly.initial ?? 50}.`].join('\n') });
+    }
+
+    if (def.features.needs !== false) {
+        const n = def.needs || {};
+        const keys = _ruleKeys(['needs', 'meter', 'warn', 'critical', 'threshold']);
+        out.push({ id: 'needs', name: 'Needs', gate: () => def.features.needs !== false, keys,
+            content: ['[Needs]', `Warn at ${n.warn_threshold ?? 30}, critical at ${n.critical_threshold ?? 10}.`,
+                'Meters below the warn threshold surface in context; critical demands action.'].join('\n') });
+    }
+
+    const p = def.progression || {};
+    {
+        const keys = _ruleKeys([p.level_field, p.xp_field, 'level', 'experience', 'xp', 'progression', p.leveling]);
+        out.push({ id: 'progression', name: 'Progression', gate: () => true, keys,
+            content: ['[Progression]',
+                `${p.uses_levels ? `Uses levels (field "${p.level_field}", start ${p.level_start})` : 'Levelless'}.`,
+                `${p.uses_xp ? `Uses XP (field "${p.xp_field}")` : 'No XP'}; leveling mode: ${p.leveling}.`].join('\n') });
+    }
+
+    return out;
+}
+
+/** entryBase-built [System Rule] entries for the active def, feature-gated, with
+ *  author overrides applied. constant:false → keyword-triggered, not always-on. */
+function buildSystemRuleEntries(def, settings) {
+    const overrides = def.rules || {};
+    const entries = [];
+    for (const d of _ruleDescriptors(def)) {
+        if (!d.gate()) continue;
+        const ov = overrides[d.id] || {};
+        const keys = _ruleKeys([...d.keys, ...(ov.keywords || [])]);
+        if (!keys.length) continue;
+        const content = ov.content || d.content;
+        const e = entryBase(`${SYSTEM_RULE_COMMENT} ${d.name}`, keys, content,
+            settings.ruleOrder ?? 50, settings, { type: 'SYSTEM_RULE', rule_id: d.id });
+        entries.push(e);
+    }
+    return entries;
+}
+
+/** Drop SYSTEM_RULE entries no longer wanted (feature disabled, rule removed). */
+async function pruneSystemRuleEntries(def, settings) {
+    if (!settings.campaignLorebook) return;
+    const keep = new Set(buildSystemRuleEntries(def, settings).map(e => e.comment));
+    await removeEntriesByComment(settings.campaignLorebook, keep, 'SYSTEM_RULE');
+}
+
 // ── Summary / panel ──────────────────────────────────────────────────────────
 
 function buildSystemDefSummary(def) {
@@ -593,9 +799,9 @@ function buildSystemDefSummary(def) {
     if (def.classes?.enabled && def.classes.options?.length)
         lines.push(`Classes: ${def.classes.options.map(o => o.name).join(', ')}`);
     if (def.features.reputation !== false && def.reputation?.tiers?.length)
-        lines.push(`Reputation (${def.reputation.scale_min}-${def.reputation.scale_max}): ${def.reputation.tiers.join(' < ')}`);
-    if (def.features.skills !== false && def.skills?.enabled)
-        lines.push(`Skills: ${(def.skills.tier_names || DEFAULT_TIER_NAMES).join(' < ')}`);
+        lines.push(`Reputation: ${def.reputation.tiers.length}-tier scale ${def.reputation.scale_min}-${def.reputation.scale_max}`);
+    if (def.features.capabilities !== false && def.capabilities?.categories?.length)
+        lines.push(`Capabilities: ${def.capabilities.categories.join(', ')}`);
     if (def.resolution?.mechanic)
         lines.push(`Resolution: ${def.resolution.mechanic}`);
     if (def.features.equipment !== false && def.equipment?.enabled && def.equipment.slots?.length)
@@ -609,9 +815,9 @@ function buildSystemDefSummary(def) {
 function buildResolutionContextString(def) {
     const r = (def || getSystemDef()).resolution;
     if (!r || !r.mechanic) return '';
+    // Always-on line stays terse: mechanic + crits. The full difficulty table
+    // lives in the keyword-triggered [System Rule] Resolution entry.
     const lines = ['[Resolution]', `Mechanic: ${r.mechanic}`];
-    if (r.difficulty) lines.push(`Difficulty: ${r.difficulty}`);
-    if (r.crit)       lines.push(`Crits: ${r.crit}`);
-    if (r.notes)      lines.push(r.notes);
+    if (r.crit) lines.push(`Crits: ${r.crit}`);
     return lines.join('\n');
 }

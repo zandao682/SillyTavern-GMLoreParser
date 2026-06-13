@@ -8,7 +8,7 @@
  *   [CHAR_CREATE_FINALIZE_BEGIN] — seals the session, computes derived stats, applies state
  *
  * The extension shows a step-checklist panel while creation is active.
- * Existing block types (SKILL_UPDATE, BOON_BEGIN, CURRENCY_UPDATE) fire normally
+ * Existing block types (CAPABILITY, CAPABILITY_UPDATE, CURRENCY_UPDATE) fire normally
  * during the session and contribute to the final character.
  *
  * Character identity fields (name, class_, background) can be set in CHAR_CREATE_BEGIN
@@ -57,10 +57,10 @@ async function applyCharCreateStep(raw, settings) {
         state.char_creation.draft[k] = v;
     }
 
-    // Race passives become passive abilities (one unified concept).
+    // Race passives become passive capabilities (one unified concept).
     if (fields.race_passives) {
         for (const p of fields.race_passives.split(/[,;]/).map(s => s.trim()).filter(Boolean))
-            await processAbilityBlock({ name: p, category: 'passive', description: `Racial passive (${state.char_creation.draft.race || 'race'})` }, settings);
+            await processCapabilityBlock({ name: p, category: 'passive', description: `Racial passive (${state.char_creation.draft.race || 'race'})` }, settings);
     }
 
     // Handle step-specific side effects

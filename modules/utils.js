@@ -6,6 +6,37 @@
 function escapeRegex(s)  { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 function slugify(s)      { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
 
+// ── Lorebook keyword helpers ───────────────────────────────────────────────────
+// Keys trigger a lorebook entry to load into context. We normalize (dedup,
+// lowercase) and conservatively expand multi-word names so "The Lost Heir" also
+// triggers on the distinctive phrase "lost heir" — without emitting bare common
+// words that would over-trigger.
+
+var KEY_STOPWORDS = new Set(['the', 'of', 'a', 'an', 'and', 'to', 'in', 'for', 'de', 'la', 'le', 'el', 'los']);
+
+/** Trim, lowercase, drop empties, dedup (stable order). */
+function normalizeKeys(keys) {
+    const seen = new Set(), out = [];
+    for (const k of (keys || [])) {
+        const t = String(k).trim().toLowerCase();
+        if (!t || seen.has(t)) continue;
+        seen.add(t); out.push(t);
+    }
+    return out;
+}
+
+/** Full lowercased name + a conservative significant-phrase sub-token. */
+function expandNameKeys(name) {
+    const full = String(name || '').trim().toLowerCase();
+    if (!full) return [];
+    const words = full.split(/\s+/);
+    const sig   = words.filter(w => w.length >= 4 && !KEY_STOPWORDS.has(w));
+    const out   = [full];
+    if (words.length >= 2 && sig.length >= 2) out.push(sig.join(' '));      // "the lost heir" -> "lost heir"
+    else if (sig.length === 1 && sig[0].length >= 5 && sig[0] !== full) out.push(sig[0]);
+    return normalizeKeys(out);
+}
+
 function getMutability(d) {
     if (!d) return MUTABILITY.IMMUTABLE;
     if (d.mutability) return d.mutability;

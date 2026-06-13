@@ -14,7 +14,7 @@ function buildContextString(state) {
     const resolutionText = getSettings().injectResolution !== false ? buildResolutionContextString(getSystemDef()) : '';
     const header        = `[Character: ${state.name}${state.class_ ? ` | ${state.class_}` : ''}${state.background ? ` | ${state.background}` : ''}]`;
     const charText      = buildValueSummary(header, state.schema || { fields: {}, groups: [] }, state.values || {});
-    const skillText     = featureOn('skills')      ? buildSkillContextString(state.skill_system) : '';
+    const capabilityText = featureOn('capabilities') ? buildCapabilityContextString(state.capabilities || {}) : '';
     const domainText    = featureOn('domains')     ? buildDomainContextString(state.domains) : '';
     const timeText      = state.world_time?.display ? `Time: ${state.world_time.display}` : '';
     const questText     = featureOn('quests')      ? buildQuestContextString(state.quests || {}) : '';
@@ -23,10 +23,9 @@ function buildContextString(state) {
     const currencyText  = featureOn('currency')    ? buildCurrencyContextString(state.currency || {}) : '';
     const rankText      = featureOn('ranks')       ? buildRankContextString(state.adventurer_rank) : '';
     const companionText = featureOn('companions')  ? buildCompanionContextString(state.companions || {}) : '';
-    const abilityText   = featureOn('abilities')   ? buildAbilityContextString(state.abilities || []) : '';
     const needsText     = featureOn('needs')       ? buildNeedsContextString(state.needs || {}) : '';  // only injects when below warn threshold
     const inventoryText = featureOn('equipment') ? buildInventoryContextString(state) : '';
-    return [resolutionText, charText, skillText, domainText, timeText, questText, repText, eventsText, currencyText, rankText, companionText, abilityText, inventoryText, needsText].filter(Boolean).join('\n');
+    return [resolutionText, charText, capabilityText, domainText, timeText, questText, repText, eventsText, currencyText, rankText, companionText, inventoryText, needsText].filter(Boolean).join('\n');
 }
 
 function injectCharacterContext() {

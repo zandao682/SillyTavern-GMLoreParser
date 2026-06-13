@@ -73,8 +73,8 @@ async function rebuildFactionLoreEntry(slug, settings) {
 
     const name     = (lore || rep).name;
     const keywords = lore?.keywords?.length
-        ? lore.keywords
-        : [name.toLowerCase(), slug];
+        ? normalizeKeys(lore.keywords)
+        : normalizeKeys([...expandNameKeys(name), slug]);
 
     const lines = [`[Faction] ${name}`];
     if (lore) {
@@ -115,8 +115,8 @@ async function processFactionBlock(fields, settings) {
     const slug    = slugify(fields.name);
     const state   = getCharState();
     const keywords = fields.keywords
-        ? fields.keywords.split(',').map(k => k.trim()).filter(Boolean)
-        : [fields.name.toLowerCase(), slug];
+        ? normalizeKeys(fields.keywords.split(','))
+        : normalizeKeys([...expandNameKeys(fields.name), slug]);
 
     // Preserve existing entry if already registered (FACTION_BEGIN can be emitted multiple times)
     const existing = state.factions[slug] || {};
@@ -164,7 +164,7 @@ async function processFactionUpdate(raw, settings) {
         state.factions[slug] = {
             name: fields.name, type: '', goals: '', leadership: '',
             resources: '', attitude_to_party: defaultAttitude(), current_state: '',
-            notes: '', keywords: [fields.name.toLowerCase(), slug], history: [],
+            notes: '', keywords: normalizeKeys([...expandNameKeys(fields.name), slug]), history: [],
         };
     }
     const faction = state.factions[slug];
@@ -178,8 +178,9 @@ async function processFactionUpdate(raw, settings) {
 
     // Append additional keywords
     if (fields.add_keywords) {
-        const extras = fields.add_keywords.split(',').map(k => k.trim()).filter(Boolean);
+        const extras = normalizeKeys(fields.add_keywords.split(','));
         for (const kw of extras) if (!faction.keywords.includes(kw)) faction.keywords.push(kw);
+        faction.keywords = normalizeKeys(faction.keywords);
         changed = true;
     }
 
@@ -247,7 +248,7 @@ async function applyReputationUpdate(raw, settings) {
         state.factions[slug] = {
             name: faction, type: '', goals: '', leadership: '', resources: '',
             attitude_to_party: defaultAttitude(), current_state: '', notes: '',
-            keywords: [faction.toLowerCase(), slug], history: [],
+            keywords: normalizeKeys([...expandNameKeys(faction), slug]), history: [],
         };
     }
 
