@@ -279,6 +279,7 @@ function playerEntityBegin(fields) {
     // fields). We then compute derived stats from the active system definition.
     applyPlayerSheet(fields._raw || '');
     const state = getCharState();
+    augmentSchemaWithDefAttributes(state.schema, state.values);   // def attributes are the source of truth for the panel
     entityComputeDerived(state.values, state.schema);
     return true;
 }

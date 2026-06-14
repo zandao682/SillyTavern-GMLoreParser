@@ -82,15 +82,43 @@ function applyRegen(schemaFields, values, elapsedMinutes, isResting) {
     return changed;
 }
 
+/** Ensure every System-Definition attribute the character actually has a value for
+ *  has a panel field — so the def's `attributes:` list is the source of truth even
+ *  when an entity block declared a field for only a subset. Missing attributes are
+ *  added as gm_event value fields under the 'attributes' group (skipping any the
+ *  entity has no value for, to avoid blank rows). Mutates and returns the schema. */
+function augmentSchemaWithDefAttributes(schema, values) {
+    if (!schema) return schema;
+    const attrs = (typeof getAttributes === 'function') ? getAttributes() : [];
+    if (!Array.isArray(attrs) || !attrs.length) return schema;
+    schema.fields = schema.fields || {};
+    schema.groups = schema.groups || [];
+    const v = values || {};
+    let added = false;
+    for (const a of attrs) {
+        if (!a.key || schema.fields[a.key]) continue;
+        if (v[a.key] === undefined || v[a.key] === null || v[a.key] === '') continue;
+        schema.fields[a.key] = {
+            label: a.label || a.abbr || a.key, abbr: a.abbr || '', description: a.description || '',
+            type: 'value', group: 'attributes', mutability: MUTABILITY.GM_EVENT,
+        };
+        added = true;
+    }
+    if (added && !schema.groups.includes('attributes')) schema.groups.push('attributes');
+    return schema;
+}
+
 /** Build a plain-text summary of schema values (for context injection).
  *  Pass a falsy `header` to omit the leading title line (e.g. lorebook entries
  *  whose `comment` already titles them). */
-function buildValueSummary(header, schema, values) {
+function buildValueSummary(header, schema, values, excludeKeys) {
     const lines = header ? [header] : [];
     const sf    = schema.fields || {};
+    const skip  = excludeKeys instanceof Set ? excludeKeys : null;
     const grouped = {};
     for (const [key, desc] of Object.entries(sf)) {
         if (isMaxFieldOf(key, sf) || isUsesCounterOf(key, sf)) continue;
+        if (skip && skip.has(key)) continue;
         const g = desc.group || 'other';
         if (!grouped[g]) grouped[g] = [];
         grouped[g].push([key, desc]);

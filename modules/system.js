@@ -56,14 +56,14 @@ var DEFAULT_SYSTEM_DEF = Object.freeze({
     creation: Object.freeze({ method: 'point_buy', ap_pool: 100, ap_cost_tiers: [] }),
     classes: Object.freeze({ enabled: false, options: [] }),
     attributes: Object.freeze([
-        Object.freeze({ key: 'fortitude', label: 'Fortitude', abbr: 'FOR' }),
-        Object.freeze({ key: 'might',     label: 'Might',     abbr: 'MGT' }),
-        Object.freeze({ key: 'intellect', label: 'Intellect', abbr: 'INT' }),
-        Object.freeze({ key: 'resolve',   label: 'Resolve',   abbr: 'RES' }),
-        Object.freeze({ key: 'agility',   label: 'Agility',   abbr: 'AGI' }),
-        Object.freeze({ key: 'wits',      label: 'Wits',      abbr: 'WIT' }),
-        Object.freeze({ key: 'perception',label: 'Perception',abbr: 'PER' }),
-        Object.freeze({ key: 'presence',  label: 'Presence',  abbr: 'PRE' }),
+        Object.freeze({ key: 'fortitude', label: 'Fortitude', abbr: 'FOR', description: 'Physical toughness, health, and endurance — how much punishment the body can take.' }),
+        Object.freeze({ key: 'might',     label: 'Might',     abbr: 'MGT', description: 'Raw physical power — melee force, lifting, and feats of strength.' }),
+        Object.freeze({ key: 'intellect', label: 'Intellect', abbr: 'INT', description: 'Reasoning, knowledge, and arcane aptitude.' }),
+        Object.freeze({ key: 'resolve',   label: 'Resolve',   abbr: 'RES', description: 'Willpower and mental fortitude — resisting fear, pain, and influence.' }),
+        Object.freeze({ key: 'agility',   label: 'Agility',   abbr: 'AGI', description: 'Speed, balance, and finesse — dodging, stealth, and precise movement.' }),
+        Object.freeze({ key: 'wits',      label: 'Wits',      abbr: 'WIT', description: 'Quick thinking, reflexes, and initiative under pressure.' }),
+        Object.freeze({ key: 'perception',label: 'Perception',abbr: 'PER', description: 'Awareness of surroundings — spotting, hearing, and reading a scene.' }),
+        Object.freeze({ key: 'presence',  label: 'Presence',  abbr: 'PRE', description: 'Force of personality — persuasion, intimidation, and leadership.' }),
     ]),
     derived_stats: Object.freeze([
         Object.freeze({ key: 'hp',    target: 'hp',    also: Object.freeze(['hp_max']),    formula: '(fortitude*5)+(might*2)+(level*10)' }),
@@ -83,6 +83,8 @@ var DEFAULT_SYSTEM_DEF = Object.freeze({
         category_progression: Object.freeze({ skill: 'veridia_pp' }),
         // capability whose tier gates #inspect detail (null → no perception gating)
         inspect_capability: 'awareness',
+        // when true, [CAPABILITY_UPDATE] on an un-owned capability is rejected (no lazy-create)
+        require_granted: false,
     }),
     // ── Progression profiles a capability can reference (Veridia PP/tier is one of them) ──
     progressions: Object.freeze([
@@ -131,7 +133,7 @@ var DEFAULT_SYSTEM_DEF = Object.freeze({
     }),
 
     // ── Possessions (configurable; optional) ──
-    inventory: Object.freeze({ model: 'freeform', capacity: null, unit: 'slots', item_box: false }),
+    inventory: Object.freeze({ model: 'freeform', capacity: null, unit: 'slots', item_box: true }),
     equipment: Object.freeze({ enabled: false, slots: Object.freeze([]) }),
 
     // ── Locations (first-class lore; instances optional) ──
@@ -436,6 +438,9 @@ function parseSystemDef(raw) {
             inspect_capability: kv.inspect_capability !== undefined
                 ? (kv.inspect_capability.trim().toLowerCase() || null)
                 : dc.inspect_capability,
+            require_granted: kv.require_granted !== undefined
+                ? _bool(kv.require_granted, false)
+                : dc.require_granted,
         };
     }
 

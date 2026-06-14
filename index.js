@@ -1,5 +1,5 @@
 /**
- * GM Lore Parser — SillyTavern Extension  v0.0.11 (beta)
+ * GM Lore Parser — SillyTavern Extension  v0.0.12 (beta)
  *
  * Entry point only. All logic lives in modules/. Load order matters:
  * state → utils → lorebook → system → schema → entity → progression →
@@ -19,7 +19,7 @@
 // glpLoadModules (state.js, …) read MODULE_NAME / VERSION as globals, so expose
 // them on window. (MODULE_NAME is also the settings/chatMetadata key.)
 var MODULE_NAME = window.MODULE_NAME = 'gm-lore-parser';
-var VERSION     = window.VERSION     = '0.0.11';
+var VERSION     = window.VERSION     = '0.0.12';
 
 // Resolve our own install folder from this module's own URL so module loading
 // works regardless of the third-party folder name (a GitHub clone is typically
@@ -278,7 +278,7 @@ async function onMessageReceived(messageId) {
 
     // ── Post-processing ───────────────────────────────────────────────────────
     if (sheetChanged) {
-        await saveCharState(); refreshStatusPanel(); injectCharacterContext();
+        await saveCharState(); refreshStatusPanel(); injectCharacterContext(); await rebuildPlayerLoreEntries(settings);
         if (settings.notifyOnSave && toastr) {
             toastr.info('Character sheet updated', 'GM Lore Parser', { timeOut: 2000, positionClass: 'toast-bottom-right' });
             for (const n of notifications) {
@@ -327,7 +327,7 @@ async function handlePlayerSheetBlocks(message, messageId, settings) {
         applied = true;
     }
     if (!applied) return;
-    await saveCharState(); refreshStatusPanel(); injectCharacterContext();
+    await saveCharState(); refreshStatusPanel(); injectCharacterContext(); await rebuildPlayerLoreEntries(settings);
     if (settings.hideBlocks) {
         let c = message.mes;
         for (const b of blocks) c = c.replace(b.fullMatch, '');
@@ -338,8 +338,11 @@ async function handlePlayerSheetBlocks(message, messageId, settings) {
 function onGenerationStarted() { injectCharacterContext(); }
 async function onChatChanged() {
     await loadSystemDefFromLorebook(getSettings());
+    const st = getCharState();
+    if (st.name) augmentSchemaWithDefAttributes(st.schema, st.values);   // backfill panel fields for def attributes (existing chars / def changes)
     refreshStatusPanel();
     injectCharacterContext();
+    await rebuildPlayerLoreEntries(getSettings());
 }
 
 // ── Settings UI ───────────────────────────────────────────────────────────────
@@ -403,6 +406,7 @@ async function renderSettingsPanel() {
       </div>
       <label class="glp-row"><input type="checkbox" id="glp-inject-ctx"   ${settings.injectIntoContext?'checked' : ''}><span>Inject state into context</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-inject-res"   ${settings.injectResolution!==false?'checked' : ''}><span>Inject resolution mechanic into context</span></label>
+      <label class="glp-row"><input type="checkbox" id="glp-tiered-ctx"   ${settings.tieredContext!==false?'checked' : ''}><span>Tiered context (lean core + keyword-triggered detail)</span></label>
       <div class="glp-field-setting">
         <label for="glp-ctx-depth">Context injection depth</label>
         <input type="number" id="glp-ctx-depth" class="text_pole" min="0" max="20" value="${settings.contextDepth}">
@@ -414,8 +418,9 @@ async function renderSettingsPanel() {
         <div class="glp-field-setting"><label>Rule order</label><input  type="number" id="glp-rule-order"  class="text_pole" min="1" max="999" value="${settings.ruleOrder}"></div>
       </div>
       <div class="glp-info">
-        <b>v0.0.11 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
+        <b>v0.0.12 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
         <b>Capability progression</b> is configurable per category via named profiles: none · counter · use_tracked · points_tiers · xp_levels · milestone (Veridia PP/tier = the built-in <i>veridia_pp</i>).<br>
+        <b>Tiered context</b> (default on): the player's always-on injection is a lean core (identity, vitals, attributes, conditions, title, rank, time); skills, possessions &amp; domains move to keyword-triggered <b>[Player:Skills]</b>/<b>[Player:Possessions]</b>/<b>[Player:Domains]</b> entries that load only when referenced. <code>capabilities.require_granted</code> rejects progression on un-owned skills.<br>
         <b>Party &amp; scene</b> rosters, <b>GM realism directives</b>, and a built-in <b>narrative header</b> (merged from gm-narrative-header) are always-on backstops: only <b>[System Definition]</b>, <b>[GM Directives]</b>, <b>[Scene]</b>, <b>[Party]</b> and NPC core memories stay in context; everything else is keyword-triggered.<br>
         <b>Detailed mechanics</b> surface on demand as keyword-triggered <b>[System Rule]</b> lorebook entries (keys derived from the def's own vocabulary); <b># commands</b> are derived from the def and reshapeable via its <code>commands:</code> section.<br>
         <b>Add a block type:</b> register tags in modules/state.js + add a handler in the relevant module + dispatch in index.js.
@@ -451,6 +456,7 @@ async function renderSettingsPanel() {
     $('#glp-plot-lorebook').on('change', function() { getSettings().plotLorebook      = this.value;   save(); });
     $('#glp-inject-ctx').on('change', function()    { getSettings().injectIntoContext = this.checked; injectCharacterContext(); save(); });
     $('#glp-inject-res').on('change', function()    { getSettings().injectResolution = this.checked; injectCharacterContext(); save(); });
+    $('#glp-tiered-ctx').on('change', async function() { getSettings().tieredContext = this.checked; injectCharacterContext(); await rebuildPlayerLoreEntries(getSettings()); save(); });
     $('#glp-ctx-depth').on('change', function()  { getSettings().contextDepth     = parseInt(this.value) || 1; injectCharacterContext(); save(); });
     $('#glp-scan-depth').on('change', function() { getSettings().defaultScanDepth = parseInt(this.value) || 4; save(); });
     $('#glp-lore-order').on('change', function() { getSettings().loreOrder        = parseInt(this.value) || 100; save(); });

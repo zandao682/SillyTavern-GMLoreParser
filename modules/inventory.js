@@ -58,6 +58,10 @@ function applyEquipDirective(equipStr, unequipStr) {
 
 /** [ITEM_BOX_UPDATE]  add: <item> | <condition>   /  remove: <item> */
 function applyItemBoxUpdate(raw) {
+    if (!inventoryCfg().item_box) {   // the system has no item box — reject rather than store invisible data
+        console.warn(`[${MODULE_NAME}] ITEM_BOX_UPDATE rejected — this system has no item box (set inventory.item_box: true to enable).`);
+        return false;
+    }
     const state  = getCharState();
     if (!state.item_box) state.item_box = [];
     const fields = parseFields(raw);

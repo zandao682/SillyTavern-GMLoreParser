@@ -12,7 +12,7 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 
 | # | Step | Verify |
 |---|------|--------|
-| P1 | Install gm-lore-parser under `…/extensions/third-party/`, reload ST. **Disable/remove the standalone gm-narrative-header** if present. | Console: `[gm-lore-parser] v0.0.11 loaded…` listing modules incl. `scene, header`; its drawer appears under Extensions; no `[gm-narrative-header]` active-load line. |
+| P1 | Install gm-lore-parser under `…/extensions/third-party/`, reload ST. **Disable/remove the standalone gm-narrative-header** if present. | Console: `[gm-lore-parser] v0.0.12 loaded…` listing modules incl. `scene, header`; its drawer appears under Extensions; no `[gm-narrative-header]` active-load line. |
 | P2 | World Info → create lorebook **`harness-campaign`** (empty). | Appears in World Info. |
 | P3 | gm-lore-parser settings → **Campaign Lorebook = `harness-campaign`**. | Persists across reload. |
 | P4 | gm-lore-parser settings: Enabled ✔, Hide raw blocks ✔, Toasts ✔, Intercept # commands ✔, Inject into context ✔, Inject resolution ✔, all panels ✔, Scan user messages ✘. | Checkboxes match. |
@@ -54,6 +54,7 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 | ID | Precondition | Action | Expected |
 |----|----|----|----|
 | ENT-01 | SD-01 | `emit: entity player` | Panel renders the sheet (HP bar, conditions pills, inventory split on `;`); derived stats fill unset targets; context shows `[Character: …]` + value summary. |
+| ENT-ATTR-01 | SD-01 (def has 5 attributes) | `emit: entity player` whose `schema:` declares fields for only 2 attributes but sets values for all 5 | All 5 attributes show in the panel + value summary — the 3 undeclared ones are backfilled from the def's `attributes:` as `gm_event` fields (def is source of truth). An attribute with no value is not shown (no blank row). |
 | ENT-04 | SD-01, `emit: entity npc` ("Garrick Stone") | `emit: entity_update npc "Garrick Stone" attitude:Wary` | `[NPC:State] Garrick Stone` updated; `[NPC] Garrick Stone` (core) unchanged; `[NPC:Progression] Garrick Stone` reflects schema. |
 | ENT-EVT-01 | ENT-01 | `emit: entity_event player` (with reason) | gm_event field changes; an entry appears in `attr_change_log` (inspect via console `getCharState()`). |
 | ENT-MEM-01 | ENT-04 | `emit: entity_memory` | Per-NPC lorebook `npc-garrick-stone` created + linked; a `[Memory] Garrick Stone — …` entry added. |
@@ -115,7 +116,8 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 | ID | Precondition | Action | Expected |
 |----|----|----|----|
 | POS-01 | SD with `equipment.enabled`, slots; player exists | `emit: entity_update player equip:"main_hand=Iron Sword"` | `state.equipment.main_hand` set; `#equipment` shows it; context `[Equipped] Main Hand: Iron Sword`. |
-| POS-BOX-01 | SD with `inventory.item_box:true` | `emit: item_box_update` | `#itembox` lists "Sword of Embers (Worn)", "Healing Draught". |
+| POS-BOX-01 | SD with `inventory.item_box:true` (Veridia default) | `emit: item_box_update` | `#itembox` lists "Sword of Embers (Worn)", "Healing Draught"; the box also shows in the panel's Equipment & Inventory section + `[Player:Possessions]`. |
+| POS-BOX-02 | SD with an `inventory:` section that omits `item_box` | `emit: item_box_update` | **Rejected** — nothing stored; `#itembox` says "This system has no item box." (no invisible storage). |
 | POS-ITEM-01 | SD-01 | `emit: item` | `[Item] The Silthorn Compass` entry; condition label derived from durability (85→Good). |
 | LOC-01 | SD-01 | `emit: location "Thornwall Keep"` then `emit: location_memory "Thornwall Keep"` | `[Location] Thornwall Keep` entry; auto-creates + links `location-thornwall-keep`; a `[Memory] …` entry added there. |
 
@@ -156,6 +158,17 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 |----|----|----|----|
 | OUT-01 | any | `emit: card_output` | Browser downloads `<name>.json`; toast `Card "…" downloaded`. |
 | OUT-02 | any | `emit: card_output_bad` | Error toast "Card JSON invalid"; no download. |
+
+### 4.17 Tiered context (lean core + keyword-triggered player detail)
+| ID | Precondition | Action | Expected |
+|----|----|----|----|
+| TIER-01 | SD-01, ENT-01, `tieredContext` on | inspect injected context (raw prompt) | The always-on `[Character: …]` block has identity + schema sheet + active title + rank + time + (warn-gated needs) and **no longer** lists the full skill set, inventory/equipment, currency, quests, factions, world events, or companions. |
+| TIER-02 | SD-01, `emit: capability skill "Swordsmanship"` + `capability_update` | inspect `harness-campaign` | A keyword-triggered (`constant:false`) `[Player:Skills]` entry exists; its `key` list includes generic skill words, the category names, AND `swordsmanship`. Mentioning "swordsmanship" in chat surfaces it. |
+| TIER-03 | ENT-01 (inventory set) + `emit: currency_update` + an equip | inspect `harness-campaign` | A `[Player:Possessions]` entry (`constant:false`) holds inventory + equipped + item-box + currency; keys include item names, equipped item names, and denomination names. |
+| TIER-04 | QST-01 + REP-01 done | inspect `harness-campaign` | Quests/factions still surface via their own `[Quest]`/`[Faction]` entries; they are **not** duplicated into `[Player:*]`. |
+| TIER-05 | TIER-02/03 | add an inventory item via `[ENTITY_UPDATE]`; then remove all capabilities | `[Player:Possessions]` rebuilds with the new item; `[Player:Skills]` is pruned (deleted) once no capabilities remain. |
+| TIER-06 | TIER-01 | toggle **Tiered context** OFF in settings | Injected context reverts to the full monolithic sheet (skills/inventory/etc. inline); all `[Player:Skills]`/`[Player:Possessions]`/`[Player:Domains]` entries are removed from the lorebook. Toggling back ON restores them. |
+| TIER-REQ-01 | `emit: system_def` with `capabilities: require_granted: true` | `emit: capability_update "Unknown Skill" points:100` | Rejected — no capability created; toast/console "Unknown capability … must be granted". With `require_granted:false` (default), the same update lazy-creates the skill (current behavior). |
 
 ---
 
@@ -248,6 +261,7 @@ Delete `harness-campaign`, `harness-campaign-plot`, and any `location-*` / `npc-
 | PARTY_UPDATE / SCENE_UPDATE | PTY-01…PTY-03, SCN-01…SCN-04, PSC-LINK-01 |
 | GM Directives (`directives:` / `[GM Directives]`) | SD-DIR-01, SD-DIR-02 |
 | Always-on audit (constant entries) | XC-CONST-01 |
+| Tiered context ([Player:*] entries, require_granted) | TIER-01…TIER-06, TIER-REQ-01 |
 | CHAR_CREATE begin/step/finalize | CC-01, CC-02 |
 | CARD_OUTPUT / COMMAND_RESPONSE | OUT-01, OUT-02, CMD-01 |
 | HEADER_FORMAT | HDR-01…HDR-06, HDR-DUP-01 |
@@ -271,4 +285,4 @@ Delete `harness-campaign`, `harness-campaign-plot`, and any `location-*` / `npc-
 7. **Derived stats only fill unset/zero targets** — the harness leaves hp/mp/vigor blank deliberately.
 8. **NPC values are reconstructed from lorebook text** — verify NPC tests via the three `[NPC…]` entries' content, not chatMetadata.
 
-The block catalogue inside `test-harness-card.json` duplicates the live protocol; if the extension protocol changes, regenerate the catalogue (canonical templates: `system-designer-card.json`). The harness stamps `protocol_version 0.0.11`.
+The block catalogue inside `test-harness-card.json` duplicates the live protocol; if the extension protocol changes, regenerate the catalogue (canonical templates: `system-designer-card.json`). The harness stamps `protocol_version 0.0.12`.

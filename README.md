@@ -2,7 +2,7 @@
 
 A SillyTavern extension that automates campaign record-keeping for AI-run tabletop RPGs. The GM (or the Architect that designs a game) emits structured blocks at the end of messages; the extension parses them and maintains the ruleset, character/NPC/companion state, lorebooks, capabilities, world time, and more — automatically.
 
-**Version:** 0.0.11 (beta)
+**Version:** 0.0.12 (beta)
 **Requires:** SillyTavern 1.12.0+
 
 It is system-agnostic: a single `[SYSTEM_DEF]` block defines the ruleset (which subsystems exist, attributes, derived-stat formulas, progression model, optional classes, reputation/skill/needs settings, conflict resolution, and more). Player, NPC, Companion, and Creature share one stat-block engine via the unified `[ENTITY]` family; Boons/Titles/Passives/Evolution/Skills are one `[CAPABILITY]` concept with configurable progression. Levels, XP, classes, capabilities, reputation, needs, and the other subsystems are all opt-in — a classless, levelless, skill-based system is fully supported.
@@ -80,11 +80,11 @@ classes:
     grants_abilities: Mana Font
 
 attributes:
-  fortitude | Fortitude | FOR
-  might | Might | MGT
-  intellect | Intellect | INT
-  resolve | Resolve | RES
-  agility | Agility | AGI
+  fortitude | Fortitude | FOR | Physical toughness, health, and endurance.
+  might | Might | MGT | Raw physical power — melee force and feats of strength.
+  intellect | Intellect | INT | Reasoning, knowledge, and arcane aptitude.
+  resolve | Resolve | RES | Willpower and mental fortitude.
+  agility | Agility | AGI | Speed, balance, and finesse.
 
 derived:
   hp = (fortitude*5)+(might*2)+(level*10) -> hp, hp_max
@@ -105,6 +105,7 @@ capabilities:
   exclusive_category: title
   category_progression: skill:veridia_pp
   inspect_capability: awareness
+  require_granted: false
 progressions:
   profile: veridia_pp | points_tiers
     tier_names: Novice, Apprentice, Adept, Expert, Master, Grandmaster, Saint, God
@@ -192,15 +193,15 @@ commands:
 - `features:` — a comma list of the **enabled** subsystems (capabilities, ranks, reputation, currency, needs, companions, party, scene, domains, quests, world_events, equipment). Anything omitted is disabled: its blocks no-op, its panel section hides, its context injection is suppressed, and its commands drop out. Omit the whole section to keep all features on.
 - `progression:` — `levels:false`/`xp:false` produce a levelless / XP-less system. `level` is exposed to formulas only when `levels:true`.
 - `identity:` / `classes:` — declared identity fields (class/background/race) and an optional class catalogue (modifiers + granted skills/abilities; same shape serves races/backgrounds).
-- `attributes:` / `derived:` — `key | label | abbr` rows and `key = formula -> target[, also…]` rows, evaluated with a strict arithmetic-only whitelist (no code execution).
+- `attributes:` / `derived:` — `key | label | abbr | description` rows (the optional 4th field is the panel hover tooltip) and `key = formula -> target[, also…]` rows, evaluated with a strict arithmetic-only whitelist (no code execution). The attribute list is the source of truth for the player's stat panel (see *Attributes are def-driven* above).
 - `reputation:` / `loyalty:` — custom `scale: min-max`, `initial`, and tier names.
-- `capabilities:` — the unified boon/title/passive/trait/evolution/skill primitive. `categories` (the vocabulary), `default_category`, `exclusive_category` (one active at a time, e.g. title), `category_progression` (maps a category → a profile in `progressions:`), and `inspect_capability` (the capability whose tier gates `#inspect` detail; set blank for no gating). A capability's **category** says *what* it is; its **progression** says *how* it advances — orthogonal.
+- `capabilities:` — the unified boon/title/passive/trait/evolution/skill primitive. `categories` (the vocabulary), `default_category`, `exclusive_category` (one active at a time, e.g. title), `category_progression` (maps a category → a profile in `progressions:`), `inspect_capability` (the capability whose tier gates `#inspect` detail; set blank for no gating), and `require_granted` (when `true`, a `[CAPABILITY_UPDATE]` targeting a capability the player doesn't have is **rejected** instead of lazy-created — so progression only applies to skills the GM has actually granted; default `false`). A capability's **category** says *what* it is; its **progression** says *how* it advances — orthogonal.
 - `progressions:` — named progression profiles a capability can reference. Each `profile: <id> | <type>` with `type ∈ none | counter | use_tracked | points_tiers | xp_levels | milestone` and optional `tier_names` / `levels_per_tier` / `cost_formula` / `score_formula`. The Veridia PP/tier model is the built-in `veridia_pp` profile — author your own for other systems.
 - `resolution:` — documents how checks are resolved (d20 vs DC, d100 roll-under, dice pool, 2d6+mod, …). The extension never rolls; this is injected into context so the GM resolves checks consistently. The terse mechanic line is always-on; the full difficulty table moves to the keyword-triggered `[System Rule] Resolution` entry.
 - `rules:` — optional per-rule overrides for the keyword-triggered `[System Rule]` entries. Each `rule: <id>` may set `keywords:` (added to the def-derived trigger words) and `content:` (replaces the derived prose). `emit_rule_entries: false` suppresses these entries entirely.
 - `directives:` / `emit_directives:` — the always-on **GM behavioral directives** (realism guardrails). Four ship by default — `knowledge_scoping` (characters know only what they witnessed or were told), `no_auto_bond` (NPC attitudes are earned, not automatic), `player_can_fail` (the resolution mechanic is honored; success isn't guaranteed), `player_agency` (the GM never decides the PC's choices). The `directives:` section overrides a directive's text by id (`knowledge_scoping: <new text>`), adds a custom one (`<custom_id>: <text>`), or drops some with `disable: id1, id2`. They are emitted as a single constant `[GM Directives]` lorebook entry (always in context); `emit_directives: false` suppresses it. The Architect also embeds them in produced GM cards when the designed system calls for it.
 - **Vocabularies** — `quests`, `world_events`, `factions`, `companions`, `capabilities` let a system rename statuses/categories/roles/attitudes and their defaults.
-- **Possessions** — `inventory` (model `freeform`/`slots`/`weight` + `capacity`/`unit`, optional `item_box`) and `equipment` (system-defined `slot:` set, gated by `features.equipment`).
+- **Possessions** — `inventory` (model `freeform`/`slots`/`weight` + `capacity`/`unit`, plus `item_box` — a second, condition-bearing container) and `equipment` (system-defined `slot:` set, gated by `features.equipment`). `item_box` is on in the Veridia default; a system that defines an `inventory:` section without it has no box, and `[ITEM_BOX_UPDATE]` is **rejected** there (no invisible storage).
 - `locations:` — location `types`, whether discovery auto-creates a per-location history lorebook, and an optional `instances` subtype (only when `instance.enabled`).
 - `commands:` — reshape the `#` command set: alias/rename a built-in `view`, or add a custom command whose `template` renders `{tokens}` against character state. When present it defines the active set (plus always-on `#status`/`#vitals`/`#system`/`#help`).
 - `needs:`, `item_conditions:`, `rank_ladder:` — life-sim thresholds, durability bands, rank progression.
@@ -254,6 +255,8 @@ blade: 0
 ```
 
 The `schema:` section defines every field — display type, panel group, mutability, regen, use-tracking. Flat `key: value` lines after it provide starting values. Derived stats (HP/MP/… per the system definition) are computed automatically for any target field present in the schema that isn't already set.
+
+**Attributes are def-driven.** The System Definition's `attributes:` list is the source of truth for the player's stats: any attribute the player has a value for is shown in the panel even if the entity block didn't declare a `field:` for it (it's added automatically as a `gm_event` value field under the *attributes* group). So you only need to declare schema fields for non-attribute panel elements; the attribute set comes from the def.
 
 **Per-type follow-on behavior**
 - **player** — stored in chat metadata; shown in the status panel and injected into context. No lorebook entry.
@@ -487,9 +490,26 @@ Header settings: enable/disable, prefer the `[HEADER_FORMAT]` block vs. the manu
 
 ---
 
+## Context injection — tiered (lean core + on-demand detail)
+
+The player's state reaches the GM two ways, and by default it's **tiered** so the prompt only carries what's relevant:
+
+- **Always-on core** (injected every turn via the Author's-Note position): identity, the schema sheet (vitals/attributes/conditions/status), active title, rank, world time, and any needs below their warn threshold. This is what the GM always needs.
+- **On-demand detail** (keyword-triggered lorebook entries, loaded only when the narrative references them):
+  - **`[Player:Skills]`** — the full capability/skill list with tiers/levels/scores. Keys: generic skill words, the system's category names, and every capability's own name. Mention a skill ("she draws on her *Swordsmanship*") and the entry loads, so the GM can confirm the player has it and at what level before resolving the action or applying progression.
+  - **`[Player:Possessions]`** — inventory, equipped gear, item box, and currency. Keys: possession/wealth words plus each item, equipped item, and denomination name.
+  - **`[Player:Domains]`** — domain sub-game stats (if the `domains` feature is on).
+  - **Quests, factions, and world events** are *already* keyword-triggered (`[Quest]`/`[Faction]`/`[World Event]` entries), so they're simply dropped from the always-on core rather than duplicated.
+
+These `[Player:*]` entries are `constant:false` (keyword-triggered) and rebuild automatically whenever the relevant state changes; empty ones are pruned. **Companions** are tiered the same way — their detail surfaces via their own name-keyed entry, and presence is signalled by the constant `[Party]`/`[Scene]` rosters.
+
+Turn this off with **Tiered context** in settings to fall back to the legacy behavior (the entire sheet injected always-on, no `[Player:*]` entries).
+
+---
+
 ## Always-on vs. keyword-triggered lorebook entries
 
-Only a handful of entries are **constant** (always in context): `[System Definition]` (terse summary), `[GM Directives]`, `[Scene]`, `[Party]`, and each NPC's **core** memories. Everything else is **keyword-triggered** so it loads only when relevant — items, locations, factions, quests, world events, capabilities, `[System Rule]` entries, episodic memories, and NPC state/progression. This keeps the always-on context small while the bulk of campaign lore stays a keyword away.
+Only a handful of entries are **constant** (always in context): `[System Definition]` (terse summary), `[GM Directives]`, `[Scene]`, `[Party]`, and each NPC's **core** memories. Everything else is **keyword-triggered** so it loads only when relevant — the player's own `[Player:Skills]`/`[Player:Possessions]`/`[Player:Domains]` detail, items, locations, factions, quests, world events, capabilities, `[System Rule]` entries, episodic memories, and NPC state/progression. This keeps the always-on context small while the bulk of campaign lore (and the player's full kit) stays a keyword away.
 
 ---
 
@@ -498,7 +518,7 @@ Only a handful of entries are **constant** (always in context): `[System Definit
 | Lorebook | Created by | Contains |
 |---|---|---|
 | GM card embedded book | card author / Architect | Block-protocol reminder + system rules |
-| Campaign lorebook | extension | `[System Definition]` / `[GM Directives]` / `[Scene]` / `[Party]` (constant), `[System Rule]` entries (keyword-triggered), NPC core/state/progression, creatures, factions+reputation, items, capabilities, quests, world events, locations, rules, events |
+| Campaign lorebook | extension | `[System Definition]` / `[GM Directives]` / `[Scene]` / `[Party]` (constant), `[Player:Skills]` / `[Player:Possessions]` / `[Player:Domains]` (keyword-triggered player detail), `[System Rule]` entries (keyword-triggered), NPC core/state/progression, creatures, factions+reputation, items, capabilities, quests, world events, locations, rules, events |
 | `npc-{slug}` lorebooks | extension (auto) | Per-NPC memories — core (constant) + episodic (keyword-triggered) |
 
 **Keyword triggering.** Keyword-triggered entries load into context only when the chat mentions one of their keys. The parser normalizes every key set (trim, lowercase, dedup) and, when you don't supply explicit `keywords:`, derives them from the entry's name via `expandNameKeys`: the full lowercased name plus a conservative significant sub-phrase (e.g. "The Lost Heir" also triggers on "lost heir"), never bare common words. `[System Rule]` entries derive their keys from the System Definition's own vocabulary (tier names, rank labels, attitudes, need meters, dice tokens…). When you do supply `keywords:`, give 2–5 specific, distinctive terms and avoid generic words, which over-trigger.
@@ -520,6 +540,7 @@ Only a handful of entries are **constant** (always in context): `[System Definit
 | Inject into context | on | Character state in Author's Note position |
 | Context injection depth | 1 | Messages from bottom where state injects |
 | Inject resolution | on | Prepend the system's conflict-resolution mechanic to context |
+| Tiered context | on | Lean always-on core + keyword-triggered `[Player:*]` detail entries (off = legacy monolithic injection of the whole sheet) |
 | Scan / lore / rule order | 4 / 100 / 50 | Lorebook scan depth and entry ordering |
 | **Narrative header** | on | Prepend an in-narrative status header to GM messages |
 | Use `[HEADER_FORMAT]` block | on | Prefer the captured format block over the manual format |

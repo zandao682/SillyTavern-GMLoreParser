@@ -30,6 +30,7 @@ function capabilityCfg() {
         exclusive_category: c.exclusive_category || 'title',
         category_progression: c.category_progression || {},
         inspect_capability: ('inspect_capability' in c) ? c.inspect_capability : 'awareness',
+        require_granted:    c.require_granted === true,   // reject CAPABILITY_UPDATE on an un-owned capability instead of lazy-creating
     };
 }
 
@@ -207,6 +208,13 @@ function applyCapabilityUpdate(raw) {
     for (const rec of records) {
         const owner = 'player';
         let cap = findCapability(state, owner, rec.name);
+        if (!cap && cfg.require_granted) {
+            // System Definition opts out of lazy-create: progression/use of a capability
+            // the player has not been granted is rejected (the GM must grant it first).
+            console.warn(`[${MODULE_NAME}] CAPABILITY_UPDATE rejected — "${rec.name}" not granted (require_granted)`);
+            notifications.push({ type: 'rejected', msg: `Unknown capability "${rec.name}" — must be granted before progression.` });
+            continue;
+        }
         if (!cap) {
             // Lazy-create (mirrors old SKILL_UPDATE auto-create). Default to a progressing
             // category if the system declares one, else the default category.
@@ -306,6 +314,16 @@ function _advanceCapability(cap, rec, notifications) {
 }
 
 // ── Context / panel ───────────────────────────────────────────────────────────
+
+/** Just the active exclusive (e.g. title) line — kept in the always-on lean core
+ *  while the full capability list moves to the keyword-triggered [Player:Skills] entry. */
+function buildActiveTitleContextString(caps) {
+    const own = _ownCaps({ capabilities: caps }, 'player');
+    if (!own.length) return '';
+    const cfg = capabilityCfg();
+    const active = own.find(c => c.category === cfg.exclusive_category && c.active);
+    return active ? `Active ${cfg.exclusive_category[0].toUpperCase() + cfg.exclusive_category.slice(1)}: ${active.name}` : '';
+}
 
 function buildCapabilityContextString(caps) {
     const own = _ownCaps({ capabilities: caps }, 'player');

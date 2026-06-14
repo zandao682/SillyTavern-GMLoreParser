@@ -97,6 +97,7 @@ var DEFAULT_SETTINGS = Object.freeze({
     showBoonPanel: true, showNeedsPanel: true,
     interceptCommands: true, plotLorebook: '',
     injectResolution: true,
+    tieredContext: true,      // lean always-on core + keyword-triggered [Player:*] detail (off = legacy monolithic injection)
     pinPanel: false,          // keep the GM State drawer locked open
     showPartyPanel: true, showScenePanel: true,
     // ── Narrative header (merged from gm-narrative-header) ──────────────────

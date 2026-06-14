@@ -22,8 +22,10 @@ function renderField(key, descriptor, values) {
     const usesThr = descriptor.uses_threshold || 0;
     const usesInd = mut === MUTABILITY.USE_TRACKED && usesThr > 0
         ? `<span class="glp-uses-progress" title="${usesVal}/${usesThr} uses">${usesVal}/${usesThr}↑</span>` : '';
+    // No own tooltip on the ★ — it would otherwise be what the user hovers instead of
+    // the attribute description. The glyph alone marks a milestone (GM_EVENT) field.
     const evBadge = mut === MUTABILITY.GM_EVENT
-        ? `<span class="glp-event-badge" title="milestone/level-up">★</span>` : '';
+        ? `<span class="glp-event-badge">★</span>` : '';
     const rpm         = regenPerMinute(descriptor);
     const regenDisplay = rpm && descriptor.regen
         ? `<span class="glp-regen-rate">${formatRegenDisplay(rpm)}</span>` : '';
@@ -35,9 +37,9 @@ function renderField(key, descriptor, values) {
             const pct = max > 0 ? Math.max(0, Math.min(100, (cur / max) * 100)) : 0;
             const _pcfg = presentationCfg();
             const d   = pct <= _pcfg.bar_danger_pct ? 'glp-danger' : pct <= _pcfg.bar_warn_pct ? 'glp-warning' : '';
-            return `<div class="glp-field-bar ${d}">
+            return `<div class="glp-field-bar ${d}"${titleAttr}>
                 <div class="glp-field-bar-header">
-                    <span class="glp-field-label"${titleAttr}>${label}${evBadge}</span>
+                    <span class="glp-field-label">${label}${evBadge}</span>
                     <span class="glp-field-bar-val" style="color:${color}">${cur}${max !== cur ? `/${max}` : ''} ${regenDisplay}</span>
                 </div>
                 <div class="glp-bar-track"><div class="glp-bar-fill" style="width:${pct}%;background:${color}"></div></div>
@@ -49,8 +51,8 @@ function renderField(key, descriptor, values) {
             const pips = Array.from({ length: Math.min(max, presentationCfg().max_pips) }, (_, i) =>
                 `<span class="glp-pip ${i < cur ? 'glp-pip-full' : 'glp-pip-empty'}" style="${i < cur ? `background:${color}` : ''}"></span>`
             ).join('');
-            return `<div class="glp-field-pool">
-                <span class="glp-field-label"${titleAttr}>${label}${evBadge}</span>
+            return `<div class="glp-field-pool"${titleAttr}>
+                <span class="glp-field-label">${label}${evBadge}</span>
                 <span class="glp-pool-pips">${pips}</span>
                 <span class="glp-pool-count" style="color:${color}">${cur}/${max}${regenDisplay}</span>
             </div>`;
@@ -68,8 +70,8 @@ function renderField(key, descriptor, values) {
             return `<div class="glp-field-text"><span class="glp-field-label"${titleAttr}>${label}</span><span class="glp-field-text-val">${val}</span></div>`;
         default:
             if (val === undefined || val === null || val === '') return '';
-            return `<div class="glp-field-value">
-                <span class="glp-field-label"${titleAttr}>${label}${evBadge}</span>
+            return `<div class="glp-field-value"${titleAttr}>
+                <span class="glp-field-label">${label}${evBadge}</span>
                 <span class="glp-field-value-val" style="color:${color}">${val}</span>
                 ${usesInd}
             </div>`;
