@@ -55,6 +55,11 @@ var SHEET_BLOCKS = {
     XP_AWARD:          { begin: '[XP_AWARD_BEGIN]',          end: '[XP_AWARD_END]'          },
     COMMAND_RESPONSE:  { begin: '[COMMAND_RESPONSE_BEGIN]',  end: '[COMMAND_RESPONSE_END]'  },
     CARD_OUTPUT:       { begin: '[CARD_OUTPUT_BEGIN]',       end: '[CARD_OUTPUT_END]'       },
+    // ── Chunked card assembly (build a produced GM card across messages) ────────
+    CARD_BEGIN:      { begin: '[CARD_BEGIN]',            end: '[CARD_END]'            },
+    CARD_FIELD:      { begin: '[CARD_FIELD_BEGIN]',      end: '[CARD_FIELD_END]'      },
+    CARD_BOOK_ENTRY: { begin: '[CARD_BOOK_ENTRY_BEGIN]', end: '[CARD_BOOK_ENTRY_END]' },
+    CARD_FINALIZE:   { begin: '[CARD_FINALIZE_BEGIN]',   end: '[CARD_FINALIZE_END]'   },
     // ── Character creation session ────────────────────────────────────────────
     CHAR_CREATE_BEGIN:    { begin: '[CHAR_CREATE_BEGIN]',    end: '[CHAR_CREATE_END]'    },
     CHAR_CREATE_STEP:     { begin: '[CHAR_CREATE_STEP_BEGIN]', end: '[CHAR_CREATE_STEP_END]' },
@@ -137,7 +142,14 @@ var DEFAULT_CHAR_STATE = Object.freeze({
     item_box: [],         // [{ item, condition }]  optional extradimensional container
     // ── v7 additions ──────────────────────────────────────────────────────
     header_format: '',    // captured [HEADER_FORMAT] template (merged narrative header)
-    schema_version: 7,
+    // ── v8 additions ──────────────────────────────────────────────────────
+    card_draft: {         // chunked produced-card assembly (Architect Stage 9)
+        active: false,
+        name: '',
+        data: {},         // accumulated chara_card_v2 data fields (system_prompt, first_mes, …)
+        book_entries: [], // accumulated character_book entries
+    },
+    schema_version: 8,
 });
 
 // ── State accessors ───────────────────────────────────────────────────────────
@@ -179,7 +191,8 @@ function getCharState() {
     if (!s.scene)  s.scene  = {};
     if (s.scene_location === undefined) s.scene_location = '';
     if (s.header_format === undefined)  s.header_format  = '';
-    if (!s.schema_version || s.schema_version < 7) s.schema_version = 7;
+    if (!s.card_draft) s.card_draft = structuredClone(DEFAULT_CHAR_STATE.card_draft);
+    if (!s.schema_version || s.schema_version < 8) s.schema_version = 8;
     return s;
 }
 

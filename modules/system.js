@@ -682,20 +682,62 @@ async function saveSystemDef(def, settings) {
     console.log(`[${MODULE_NAME}] System definition saved: ${def.name}`);
 }
 
-/** Idempotent: hydrate the cache from the lorebook entry once per chat. */
+/** Idempotent: hydrate the ruleset cache once per chat, from (in order):
+ *  1. the campaign lorebook's [System Definition] entry — structured
+ *     (extensions.system_def) or a [SYSTEM_DEF] text block in its content;
+ *  2. the active character card's embedded character_book — a [System Definition]
+ *     entry whose content is a [SYSTEM_DEF] text block. This lets a produced GM card
+ *     self-describe its ruleset WITHOUT the GM emitting [SYSTEM_DEF] from first_mes,
+ *     so first_mes can be pure in-world intro prose. */
 async function loadSystemDefFromLorebook(settings) {
     const state = getCharState();
     if (state.system_def) return;                       // already cached
-    if (!settings.campaignLorebook) return;
-    const { loadWorldInfo } = SillyTavern.getContext();
-    const data  = await loadWorldInfo(settings.campaignLorebook);
-    const entry = data?.entries && Object.values(data.entries)
-        .find(e => e.comment === SYSTEM_DEF_COMMENT);
-    if (entry?.extensions?.system_def) {
-        state.system_def = mergeWithDefaults(entry.extensions.system_def);
-        await saveCharState();
-        console.log(`[${MODULE_NAME}] System definition hydrated from lorebook: ${state.system_def.name}`);
+    const ctx = SillyTavern.getContext();
+
+    // 1) Campaign lorebook entry
+    if (settings.campaignLorebook) {
+        const data  = await ctx.loadWorldInfo(settings.campaignLorebook);
+        const entry = data?.entries && Object.values(data.entries)
+            .find(e => e.comment === SYSTEM_DEF_COMMENT);
+        if (entry?.extensions?.system_def) {
+            state.system_def = mergeWithDefaults(entry.extensions.system_def);
+            await saveCharState();
+            _hydrateHeaderFromText(entry.content, state);
+            console.log(`[${MODULE_NAME}] System definition hydrated from lorebook: ${state.system_def.name}`);
+            return;
+        }
+        if (entry?.content && await _hydrateDefFromText(entry.content, settings)) return;
     }
+
+    // 2) Active character's embedded character_book
+    const book = ctx.characters?.[ctx.characterId]?.data?.character_book?.entries;
+    if (Array.isArray(book)) {
+        const ce = book.find(e => (e.comment || '').trim() === SYSTEM_DEF_COMMENT);
+        if (ce?.content && await _hydrateDefFromText(ce.content, settings)) return;
+    }
+}
+
+/** Parse a [SYSTEM_DEF] text block out of arbitrary content and persist it via the
+ *  same path as a live emission (saveSystemDef → state + canonical lorebook entry +
+ *  rule/directive entries). Also seeds the header format from a [HEADER_FORMAT] block
+ *  in the same content. Returns true if a def was found. */
+async function _hydrateDefFromText(content, settings) {
+    const begin = SHEET_BLOCKS.SYSTEM_DEF.begin, end = SHEET_BLOCKS.SYSTEM_DEF.end;
+    const s = String(content).indexOf(begin); if (s === -1) return false;
+    const e = String(content).indexOf(end, s);  if (e === -1) return false;
+    const raw = String(content).slice(s + begin.length, e).trim();
+    const def = parseSystemDef(raw);
+    await saveSystemDef(def, settings);
+    _hydrateHeaderFromText(content, getCharState());
+    console.log(`[${MODULE_NAME}] System definition hydrated from a [SYSTEM_DEF] text block: ${def.name}`);
+    return true;
+}
+
+/** Seed state.header_format from a [HEADER_FORMAT] block in content, if not already set. */
+function _hydrateHeaderFromText(content, state) {
+    if (state.header_format) return;
+    const blk = (typeof extractHeaderFormat === 'function') ? extractHeaderFormat(content || '') : null;
+    if (blk?.format) state.header_format = blk.format;
 }
 
 // ── Def-driven [System Rule] entries ────────────────────────────────────────

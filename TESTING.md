@@ -2,6 +2,8 @@
 
 A comprehensive **manual** test plan, run by hand in SillyTavern using the **Test Harness** card (`test-harness-card.json`). Nothing here is automated — the extension only runs inside SillyTavern. The narrative header is now built into gm-lore-parser (the former standalone `gm-narrative-header` extension is deprecated and must be disabled/removed, or headers double-prepend).
 
+> Testing **The Architect** (the system-designer card) and the **GM cards it produces** is a separate plan: [`ARCHITECT-TESTING.md`](ARCHITECT-TESTING.md). This file covers the extension itself.
+
 ---
 
 ## 1. Purpose & scope
@@ -12,7 +14,7 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 
 | # | Step | Verify |
 |---|------|--------|
-| P1 | Install gm-lore-parser under `…/extensions/third-party/`, reload ST. **Disable/remove the standalone gm-narrative-header** if present. | Console: `[gm-lore-parser] v0.0.12 loaded…` listing modules incl. `scene, header`; its drawer appears under Extensions; no `[gm-narrative-header]` active-load line. |
+| P1 | Install gm-lore-parser under `…/extensions/third-party/`, reload ST. **Disable/remove the standalone gm-narrative-header** if present. | Console: `[gm-lore-parser] v0.0.13 loaded…` listing modules incl. `scene, header`; its drawer appears under Extensions; no `[gm-narrative-header]` active-load line. |
 | P2 | World Info → create lorebook **`harness-campaign`** (empty). | Appears in World Info. |
 | P3 | gm-lore-parser settings → **Campaign Lorebook = `harness-campaign`**. | Persists across reload. |
 | P4 | gm-lore-parser settings: Enabled ✔, Hide raw blocks ✔, Toasts ✔, Intercept # commands ✔, Inject into context ✔, Inject resolution ✔, all panels ✔, Scan user messages ✘. | Checkboxes match. |
@@ -158,6 +160,16 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 |----|----|----|----|
 | OUT-01 | any | `emit: card_output` | Browser downloads `<name>.json`; toast `Card "…" downloaded`. |
 | OUT-02 | any | `emit: card_output_bad` | Error toast "Card JSON invalid"; no download. |
+| CARDBLD-01 | any | in order: `emit: card_begin` → `emit: card_field` → `emit: card_field append` → `emit: card_book_entry` → `emit: card_finalize` | On finalize a **valid V2 card JSON downloads** (toast "Card … assembled & downloaded (N lore entries)"). The appended field is concatenated; the book entry is in `data.character_book.entries`; `data.character_version` is stamped; `chatMetadata['gm-lore-parser'].card_draft.active` resets to false. |
+| CARDBLD-02 | fresh chat, **no** prior `card_begin` | `emit: card_field` (then `card_book_entry`, `card_finalize`) | Each is **ignored** — console warns "outside an active card assembly"; nothing buffered, no download. |
+| CARDBLD-03 | any | `emit: card_output` (one-shot) | The one-shot path **still** downloads a complete card (back-compat with capable models). |
+| CARDBLD-04 | active `card_begin` + only `system_prompt` set (no `first_mes`/`post_history`/entries) | `emit: card_finalize` | Finalize is **blocked** — warning toast "Card not finalized — still missing: first_mes, post_history_instructions, character_book entry"; `card_draft.active` stays **true**; nothing downloads. After emitting the missing fields + one `card_book_entry`, a second `card_finalize` **succeeds**. |
+| CARDBLD-05 | active draft with all required fields, then **two** `card_book_entry` blocks sharing the same `comment` (or same `keys`) | `emit: card_finalize` | Card downloads with the duplicate **collapsed to one** entry (the longer-content copy kept); info toast "Removed 1 duplicate lore entry…"; console logs the drop. Entries whose content is `<120` chars are logged as shallow (not dropped). |
+| CARDBLD-06 | active draft, `system_prompt` set | `card_field` with an **unrecognized key** (e.g. `key: entity_protocol`) | The stray key is **not** added to `card_draft.data`; its body is appended to `system_prompt` as a titled section (`## Entity Protocol\n<body>`); console warns "unrecognized key … folded into system_prompt". So a model that fragments the system_prompt into section-named fields still produces a complete `system_prompt` (and can finalize). |
+| CARDBLD-07 | any | a `card_begin`/`card_finalize` sequence **wrapped in a ```` ```text ```` code fence** | Blocks still parse — the fence marker lines are stripped before extraction; the card assembles. |
+| CARDBLD-08 | active draft | `card_book_entry` with **no blank line** between the `keys/comment/...` header and the content | The content is still captured as the entry body (lenient header/body split), not lost to an empty body. |
+| CARDBLD-09 | active draft with required fields + one good entry, plus a `card_book_entry` whose **content is empty** | `card_finalize` | The empty entry is **dropped** (console warn "empty content"); the card downloads with only the real entries. If *all* entries are empty they're all dropped → finalize is blocked by the completeness gate (no broken hollow card). |
+| SYSDEF-LOAD-01 | a `[System Definition]` lore entry whose **content** is a `[SYSTEM_DEF]` text block (campaign lorebook OR the active card's `character_book`); `state.system_def` cleared | trigger `loadSystemDefFromLorebook` (any message / chat change) | `state.system_def` hydrates from the text block (name/features/resolution parsed); a `[HEADER_FORMAT]` block in the same content seeds `state.header_format`. No `[SYSTEM_DEF]` emission required. |
 
 ### 4.17 Tiered context (lean core + keyword-triggered player detail)
 | ID | Precondition | Action | Expected |
@@ -264,6 +276,11 @@ Delete `harness-campaign`, `harness-campaign-plot`, and any `location-*` / `npc-
 | Tiered context ([Player:*] entries, require_granted) | TIER-01…TIER-06, TIER-REQ-01 |
 | CHAR_CREATE begin/step/finalize | CC-01, CC-02 |
 | CARD_OUTPUT / COMMAND_RESPONSE | OUT-01, OUT-02, CMD-01 |
+| Chunked card assembly (CARD_BEGIN/FIELD/BOOK_ENTRY/FINALIZE) | CARDBLD-01, CARDBLD-02, CARDBLD-03 |
+| Finalize completeness gate + lore de-dup | CARDBLD-04, CARDBLD-05 |
+| Unknown field key folded into system_prompt | CARDBLD-06 |
+| Code-fence tolerance / lenient header-body / empty-entry drop | CARDBLD-07, CARDBLD-08, CARDBLD-09 |
+| System def hydrated from a [System Definition] text block (lorebook or card book) | SYSDEF-LOAD-01 |
 | HEADER_FORMAT | HDR-01…HDR-06, HDR-DUP-01 |
 
 **Commands → test IDs:** `#status/#character`→CMD-01; `#vitals`→TIM-01; `#skills`→CAP-PRG-01; `#inventory/#bag`→ENT-01; `#equipment`→POS-01; `#itembox`→POS-BOX-01; `#domain`→DOM-01; `#time`→TIM-01; `#quests`→QST-01; `#rep/#reputation`→REP-02; `#factions`→REP-01; `#events`→EVT-01; `#locations`→LOC-01; `#currency/#wallet`→ECO-01; `#rank`→PRG-01; `#companions`→`emit: entity companion`+`#companions`; `#legion/#hierarchy`→REG-08; `#boons`→CAP-01; `#titles`→CAP-02; `#abilities`→CAP-EVO-01; `#needs`→NDS-01; `#inspect`→INS-01; `#system/#ruleset`→SD-01; `#help`→CMD-help-01; custom/alias→CMD-02; `#party`→CMD-PTY-01; `#scene/#present`→CMD-PTY-01. (`#<category>s` commands are def-derived — see CAP-01/02.)
@@ -285,4 +302,4 @@ Delete `harness-campaign`, `harness-campaign-plot`, and any `location-*` / `npc-
 7. **Derived stats only fill unset/zero targets** — the harness leaves hp/mp/vigor blank deliberately.
 8. **NPC values are reconstructed from lorebook text** — verify NPC tests via the three `[NPC…]` entries' content, not chatMetadata.
 
-The block catalogue inside `test-harness-card.json` duplicates the live protocol; if the extension protocol changes, regenerate the catalogue (canonical templates: `system-designer-card.json`). The harness stamps `protocol_version 0.0.12`.
+The block catalogue inside `test-harness-card.json` duplicates the live protocol; if the extension protocol changes, regenerate the catalogue (canonical templates: `system-designer-card.json`). The harness stamps `protocol_version 0.0.13`.

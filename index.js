@@ -1,5 +1,5 @@
 /**
- * GM Lore Parser — SillyTavern Extension  v0.0.12 (beta)
+ * GM Lore Parser — SillyTavern Extension  v0.0.13 (beta)
  *
  * Entry point only. All logic lives in modules/. Load order matters:
  * state → utils → lorebook → system → schema → entity → progression →
@@ -19,7 +19,7 @@
 // glpLoadModules (state.js, …) read MODULE_NAME / VERSION as globals, so expose
 // them on window. (MODULE_NAME is also the settings/chatMetadata key.)
 var MODULE_NAME = window.MODULE_NAME = 'gm-lore-parser';
-var VERSION     = window.VERSION     = '0.0.12';
+var VERSION     = window.VERSION     = '0.0.13';
 
 // Resolve our own install folder from this module's own URL so module loading
 // works regardless of the third-party folder name (a GitHub clone is typically
@@ -79,16 +79,22 @@ async function glpLoadModules() {
 
 // ── CARD_OUTPUT handler ───────────────────────────────────────────────────────
 
+/** Trigger a browser download of a card object as pretty JSON. Shared by the
+ *  one-shot [CARD_OUTPUT] path and the chunked [CARD_FINALIZE] assembly. */
+function _downloadCardJson(obj) {
+    const name = obj?.data?.name || 'generated-gm-card';
+    const url  = URL.createObjectURL(new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' }));
+    const a    = Object.assign(document.createElement('a'), {
+        href: url, download: `${name.toLowerCase().replace(/\s+/g, '-')}.json`,
+    });
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return name;
+}
+
 function handleCardOutput(raw) {
     try {
-        const parsed = JSON.parse(raw);
-        const name   = parsed?.data?.name || 'generated-gm-card';
-        const url    = URL.createObjectURL(new Blob([JSON.stringify(parsed, null, 2)], { type: 'application/json' }));
-        const a      = Object.assign(document.createElement('a'), {
-            href: url, download: `${name.toLowerCase().replace(/\s+/g, '-')}.json`,
-        });
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        const name = _downloadCardJson(JSON.parse(raw));
         SillyTavern.getContext().toastr?.success(`Card "${name}" downloaded`, 'GM Lore Parser', { timeOut: 4000 });
         return true;
     } catch (e) {
@@ -96,6 +102,198 @@ function handleCardOutput(raw) {
         SillyTavern.getContext().toastr?.error('Card JSON invalid', 'GM Lore Parser');
         return false;
     }
+}
+
+// ── Chunked card assembly (CARD_BEGIN → CARD_FIELD* → CARD_BOOK_ENTRY* → CARD_FINALIZE) ──
+// Lets a small model build a produced GM card across many small messages instead
+// of emitting the whole JSON at once. State buffers in getCharState().card_draft.
+
+/** Split a block body into a `key: value` header (lines before the first blank
+ *  line) and a verbatim body (everything after it) — so multi-line prose values
+ *  with colons aren't mangled by parseFields. */
+// Header keys a [CARD_FIELD] / [CARD_BOOK_ENTRY] header line may use. Used by the
+// lenient fallback below so a body line like "Resolution: roll 2d6" is NOT mistaken
+// for a header line.
+const CARD_HEADER_KEY_RE = /^[ \t]*(key|append|keys|comment|constant|order)[ \t]*:/i;
+
+function _splitHeaderBody(raw) {
+    const nl = raw.indexOf('\n\n');
+    if (nl !== -1) return { header: parseFields(raw.slice(0, nl)), body: raw.slice(nl + 2).replace(/\s+$/, '') };
+    // No blank-line separator (a common small-model slip that would otherwise leave
+    // an empty body). Consume the leading run of recognized header lines, treat the
+    // rest as the body.
+    const lines = raw.split('\n');
+    let i = 0;
+    while (i < lines.length && CARD_HEADER_KEY_RE.test(lines[i])) i++;
+    if (i === 0 || i === lines.length) return { header: parseFields(raw), body: '' };
+    return { header: parseFields(lines.slice(0, i).join('\n')), body: lines.slice(i).join('\n').replace(/^\s+|\s+$/g, '') };
+}
+
+function applyCardBegin(raw) {
+    const fields = parseFields(raw);
+    const draft  = getCharState().card_draft;
+    draft.active = true;
+    draft.name   = fields.name || 'Generated GM Card';
+    draft.data   = {};
+    draft.book_entries = [];
+    console.log(`[${MODULE_NAME}] Card assembly opened: "${draft.name}".`);
+    return true;
+}
+
+function applyCardField(raw) {
+    const draft = getCharState().card_draft;
+    if (!draft.active) { console.warn(`[${MODULE_NAME}] CARD_FIELD outside an active card assembly — ignoring.`); return false; }
+    const { header, body } = _splitHeaderBody(raw);
+    const key = (header.key || '').trim();
+    if (!key) { console.warn(`[${MODULE_NAME}] CARD_FIELD missing key — ignoring.`); return false; }
+    const append = header.append === 'true' || header.append === true;
+    if (key === 'name') { draft.name = body.trim() || draft.name; return true; }
+    // Fold unrecognized keys into system_prompt as a titled section. A small model
+    // continuing a chunked emission sometimes splits the system_prompt into its own
+    // named fields (e.g. `entity_protocol`, `gm_directives`) instead of appending to
+    // `system_prompt` — left alone those would strand the content in stray fields and
+    // the system_prompt would never form (blocking finalize). Absorbing them keeps the
+    // artifact whole (same tolerate-the-model, guarantee-the-card philosophy as the gate).
+    if (!KNOWN_CARD_FIELDS.has(key)) {
+        const heading = key.replace(/[_-]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        const section = `## ${heading}\n${body}`;
+        draft.data.system_prompt = draft.data.system_prompt ? `${draft.data.system_prompt}\n\n${section}` : section;
+        console.warn(`[${MODULE_NAME}] CARD_FIELD: unrecognized key "${key}" folded into system_prompt as a section.`);
+        return true;
+    }
+    // Append joins with a newline — chunks of a long field (e.g. system_prompt) are
+    // split at line/section boundaries, and extractBlocks trims each chunk's edges.
+    draft.data[key] = append && draft.data[key] ? `${draft.data[key]}\n${body}` : body;
+    return true;
+}
+
+function applyCardBookEntry(raw) {
+    const draft = getCharState().card_draft;
+    if (!draft.active) { console.warn(`[${MODULE_NAME}] CARD_BOOK_ENTRY outside an active card assembly — ignoring.`); return false; }
+    const { header, body } = _splitHeaderBody(raw);
+    draft.book_entries.push({
+        keys:     (header.keys || '').split(',').map(s => s.trim()).filter(Boolean),
+        content:  body,
+        comment:  header.comment || '',
+        constant: header.constant === 'true' || header.constant === true,
+        order:    parseInt(header.order) || 100,
+    });
+    return true;
+}
+
+/** Remove standalone markdown code-fence marker lines (``` or ```lang) from a
+ *  message before block extraction. Small models often wrap their block output in
+ *  a fenced code block; the fence lines would otherwise sit between/around our
+ *  [..._BEGIN]/[..._END] tags. We strip only the fence MARKER lines, never content,
+ *  so bracket-delimited blocks survive intact. */
+function _stripCodeFences(s) {
+    return String(s || '').replace(/^[ \t]*```[^\n]*$/gm, '');
+}
+
+// Lore entries shorter than this are flagged as shallow (logged, not dropped).
+const SHALLOW_ENTRY_CHARS = 120;
+
+// Recognized chara_card_v2 `data.*` field keys a [CARD_FIELD] may target. Any other
+// key is folded into system_prompt (see applyCardField). `character_book` is omitted
+// deliberately — it is assembled from [CARD_BOOK_ENTRY] blocks, not set as a field.
+const KNOWN_CARD_FIELDS = new Set([
+    'name', 'description', 'personality', 'scenario', 'first_mes', 'mes_example',
+    'system_prompt', 'post_history_instructions', 'creator_notes', 'tags',
+    'creator', 'character_version', 'alternate_greetings', 'extensions',
+]);
+
+/** De-duplicate assembled lore entries before finalizing. A chatty model can emit
+ *  the same entry twice (e.g. a full protocol entry plus a thin restatement). We
+ *  collapse EXACT duplicates only — same normalized comment, or the same key-set —
+ *  keeping whichever copy has the richer (longer) content; semantic near-duplicates
+ *  with distinct comments/keys are left to the model directive, not guessed at here.
+ *  Returns { entries, dropped[], shallow[] }. */
+function _dedupeBookEntries(rawEntries) {
+    const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const sig  = keys => (keys || []).map(norm).filter(Boolean).sort().join('|');
+    const kept = [];
+    const byComment = new Map();   // normalized comment -> index in kept
+    const byKeys    = new Map();   // key signature       -> index in kept
+    const dropped = [];
+    for (const e of rawEntries) {
+        const c = norm(e.comment);
+        const k = sig(e.keys);
+        const hitIdx = (c && byComment.has(c)) ? byComment.get(c) : (k && byKeys.has(k)) ? byKeys.get(k) : -1;
+        if (hitIdx !== -1) {
+            const existing = kept[hitIdx];
+            // keep the richer copy
+            if (String(e.content || '').length > String(existing.content || '').length) {
+                dropped.push(`"${existing.comment}" (kept richer copy)`);
+                kept[hitIdx] = e;
+            } else {
+                dropped.push(`"${e.comment}"`);
+            }
+            // refresh indices to the kept copy
+            if (c) byComment.set(c, hitIdx);
+            if (k) byKeys.set(k, hitIdx);
+            continue;
+        }
+        const idx = kept.push(e) - 1;
+        if (c) byComment.set(c, idx);
+        if (k) byKeys.set(k, idx);
+    }
+    // Drop entries with no content body (e.g. a model that emitted only the header).
+    // A hollow entry is useless; dropping it also lets the completeness gate refuse a
+    // card whose lore is all empty (0 real entries → finalize blocked) rather than
+    // shipping shells.
+    const nonEmpty = [];
+    for (const e of kept) {
+        if (!String(e.content || '').trim()) { dropped.push(`"${e.comment}" (empty content)`); continue; }
+        nonEmpty.push(e);
+    }
+    const shallow = nonEmpty.filter(e => String(e.content || '').trim().length < SHALLOW_ENTRY_CHARS).map(e => `"${e.comment}"`);
+    return { entries: nonEmpty, dropped, shallow };
+}
+
+function applyCardFinalize() {
+    const draft = getCharState().card_draft;
+    if (!draft.active) { console.warn(`[${MODULE_NAME}] CARD_FINALIZE outside an active card assembly — ignoring.`); return false; }
+    // Clean the lore entries FIRST (drop duplicates + empty shells), so the gate below
+    // judges the entries that will actually ship — not raw shells that vanish on
+    // assembly (which would otherwise let a 0-entry card through).
+    const { entries: bookEntries, dropped, shallow } = _dedupeBookEntries(draft.book_entries);
+    if (dropped.length) {
+        console.warn(`[${MODULE_NAME}] CARD_FINALIZE de-duped/dropped ${dropped.length} lore entr${dropped.length === 1 ? 'y' : 'ies'}: ${dropped.join('; ')}`);
+        SillyTavern.getContext().toastr?.info(`Removed ${dropped.length} duplicate/empty lore entr${dropped.length === 1 ? 'y' : 'ies'} during assembly.`, 'GM Lore Parser', { timeOut: 5000 });
+    }
+    if (shallow.length) {
+        console.warn(`[${MODULE_NAME}] CARD_FINALIZE: ${shallow.length} lore entr${shallow.length === 1 ? 'y is' : 'ies are'} very short (<${SHALLOW_ENTRY_CHARS} chars): ${shallow.join('; ')}`);
+    }
+    // Completeness gate: refuse to assemble a structurally broken card. A finalize is
+    // only honored once the mandatory fields and at least one REAL lore entry survive —
+    // otherwise the draft stays active so emission can continue (mirrors the item-box
+    // gate: reject the bad state rather than produce it).
+    const REQUIRED_FIELDS = ['system_prompt', 'first_mes', 'post_history_instructions'];
+    const missing = REQUIRED_FIELDS.filter(k => !String(draft.data[k] || '').trim());
+    if (bookEntries.length === 0) missing.push('a non-empty character_book entry');
+    if (missing.length) {
+        console.warn(`[${MODULE_NAME}] CARD_FINALIZE blocked — incomplete card (missing: ${missing.join(', ')}). Draft stays open.`);
+        SillyTavern.getContext().toastr?.warning(`Card not finalized — still missing: ${missing.join(', ')}. Keep emitting, then finalize.`, 'GM Lore Parser', { timeOut: 6000 });
+        return false;
+    }
+    const data = { ...draft.data, name: draft.name, character_version: VERSION };
+    if (typeof data.tags === 'string') data.tags = data.tags.split(',').map(s => s.trim()).filter(Boolean);
+    data.character_book = {
+        name: `${draft.name} Lore`, description: '', scan_depth: 4, token_budget: 2000, recursive_scanning: true,
+        entries: bookEntries.map((e, i) => ({
+            id: i, keys: e.keys, secondary_keys: [], comment: e.comment, content: e.content,
+            constant: e.constant, selective: false, insertion_order: e.order, enabled: true,
+            position: 'before_char', extensions: {},
+        })),
+    };
+    const card = { spec: 'chara_card_v2', spec_version: '2.0', data };
+    let name;
+    try { name = _downloadCardJson(card); }
+    catch (e) { console.error(`[${MODULE_NAME}] CARD_FINALIZE assembly error:`, e); SillyTavern.getContext().toastr?.error('Card assembly failed', 'GM Lore Parser'); return false; }
+    draft.active = false;
+    SillyTavern.getContext().toastr?.success(`Card "${name}" assembled & downloaded (${data.character_book.entries.length} lore entries)`, 'GM Lore Parser', { timeOut: 5000 });
+    console.log(`[${MODULE_NAME}] Card assembly finalized: "${name}".`);
+    return true;
 }
 
 // ── Message handlers ──────────────────────────────────────────────────────────
@@ -111,7 +309,7 @@ async function onMessageReceived(messageId) {
         return;
     }
 
-    const text = message.mes;
+    const text = _stripCodeFences(message.mes);
     let sheetChanged = false;
     const notifications = [];
 
@@ -219,6 +417,16 @@ async function onMessageReceived(messageId) {
 
     for (const b of extractBlocks(text, SHEET_BLOCKS.CARD_OUTPUT.begin, SHEET_BLOCKS.CARD_OUTPUT.end))
         handleCardOutput(b.raw);
+
+    // ── Chunked card assembly ───────────────────────────────────────────────────
+    for (const b of extractBlocks(text, SHEET_BLOCKS.CARD_BEGIN.begin, SHEET_BLOCKS.CARD_BEGIN.end))
+        { applyCardBegin(b.raw); sheetChanged = true; }
+    for (const b of extractBlocks(text, SHEET_BLOCKS.CARD_FIELD.begin, SHEET_BLOCKS.CARD_FIELD.end))
+        { if (applyCardField(b.raw)) sheetChanged = true; }
+    for (const b of extractBlocks(text, SHEET_BLOCKS.CARD_BOOK_ENTRY.begin, SHEET_BLOCKS.CARD_BOOK_ENTRY.end))
+        { if (applyCardBookEntry(b.raw)) sheetChanged = true; }
+    for (const b of extractBlocks(text, SHEET_BLOCKS.CARD_FINALIZE.begin, SHEET_BLOCKS.CARD_FINALIZE.end))
+        { if (applyCardFinalize()) sheetChanged = true; }
 
     // ── Character creation blocks ──────────────────────────────────────────────
     for (const b of extractBlocks(text, SHEET_BLOCKS.CHAR_CREATE_BEGIN.begin, SHEET_BLOCKS.CHAR_CREATE_BEGIN.end))
@@ -418,7 +626,8 @@ async function renderSettingsPanel() {
         <div class="glp-field-setting"><label>Rule order</label><input  type="number" id="glp-rule-order"  class="text_pole" min="1" max="999" value="${settings.ruleOrder}"></div>
       </div>
       <div class="glp-info">
-        <b>v0.0.12 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
+        <b>v0.0.13 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
+        <b>The Architect</b> designs systems and emits a produced GM card; small models build it incrementally via <b>chunked card assembly</b> (<code>[CARD_BEGIN]</code> → <code>[CARD_FIELD]</code> → <code>[CARD_BOOK_ENTRY]</code> → <code>[CARD_FINALIZE]</code>), assembled + downloaded by the extension (one-shot <code>[CARD_OUTPUT]</code> still supported).<br>
         <b>Capability progression</b> is configurable per category via named profiles: none · counter · use_tracked · points_tiers · xp_levels · milestone (Veridia PP/tier = the built-in <i>veridia_pp</i>).<br>
         <b>Tiered context</b> (default on): the player's always-on injection is a lean core (identity, vitals, attributes, conditions, title, rank, time); skills, possessions &amp; domains move to keyword-triggered <b>[Player:Skills]</b>/<b>[Player:Possessions]</b>/<b>[Player:Domains]</b> entries that load only when referenced. <code>capabilities.require_granted</code> rejects progression on un-owned skills.<br>
         <b>Party &amp; scene</b> rosters, <b>GM realism directives</b>, and a built-in <b>narrative header</b> (merged from gm-narrative-header) are always-on backstops: only <b>[System Definition]</b>, <b>[GM Directives]</b>, <b>[Scene]</b>, <b>[Party]</b> and NPC core memories stay in context; everything else is keyword-triggered.<br>
