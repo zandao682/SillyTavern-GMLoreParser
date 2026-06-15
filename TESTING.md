@@ -14,7 +14,7 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 
 | # | Step | Verify |
 |---|------|--------|
-| P1 | Install gm-lore-parser under `…/extensions/third-party/`, reload ST. **Disable/remove the standalone gm-narrative-header** if present. | Console: `[gm-lore-parser] v0.0.13 loaded…` listing modules incl. `scene, header`; its drawer appears under Extensions; no `[gm-narrative-header]` active-load line. |
+| P1 | Install gm-lore-parser under `…/extensions/third-party/`, reload ST. **Disable/remove the standalone gm-narrative-header** if present. | Console: `[gm-lore-parser] v0.0.14 loaded…` listing modules incl. `scene, header`; its drawer appears under Extensions; no `[gm-narrative-header]` active-load line. |
 | P2 | World Info → create lorebook **`harness-campaign`** (empty). | Appears in World Info. |
 | P3 | gm-lore-parser settings → **Campaign Lorebook = `harness-campaign`**. | Persists across reload. |
 | P4 | gm-lore-parser settings: Enabled ✔, Hide raw blocks ✔, Toasts ✔, Intercept # commands ✔, Inject into context ✔, Inject resolution ✔, all panels ✔, Scan user messages ✘. | Checkboxes match. |
@@ -170,6 +170,10 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 | CARDBLD-08 | active draft | `card_book_entry` with **no blank line** between the `keys/comment/...` header and the content | The content is still captured as the entry body (lenient header/body split), not lost to an empty body. |
 | CARDBLD-09 | active draft with required fields + one good entry, plus a `card_book_entry` whose **content is empty** | `card_finalize` | The empty entry is **dropped** (console warn "empty content"); the card downloads with only the real entries. If *all* entries are empty they're all dropped → finalize is blocked by the completeness gate (no broken hollow card). |
 | SYSDEF-LOAD-01 | a `[System Definition]` lore entry whose **content** is a `[SYSTEM_DEF]` text block (campaign lorebook OR the active card's `character_book`); `state.system_def` cleared | trigger `loadSystemDefFromLorebook` (any message / chat change) | `state.system_def` hydrates from the text block (name/features/resolution parsed); a `[HEADER_FORMAT]` block in the same content seeds `state.header_format`. No `[SYSTEM_DEF]` emission required. |
+| NAME-GATE-01 | active draft with all required fields + a real entry, but `[CARD_BEGIN]` had **no name** (or `name: The Architect` = the active character) and no `[System Definition]` entry to derive from | `card_finalize` | Finalize is **blocked** (toast lists "a system name (emit [CARD_BEGIN] name: <System> GM)"); `card_draft.active` stays **true**; nothing downloads. Set a real name (`card_field key:name`, or `card_begin name:`) and finalize → downloads with `data.name == "<System> GM"`. |
+| NAME-GATE-02 | active draft, required fields + a `[System Definition]` entry whose `[SYSTEM_DEF]` has `name: Emberhold`, but `[CARD_BEGIN]` name missing/blank | `card_finalize` | Name is **derived** from the entry → `data.name == "Emberhold GM"` (the produced card never imports under the designer's name). |
+| NAME-GATE-03 | active draft, required fields + a real entry, but **no `[System Definition]` entry** present | `card_finalize` | Card still downloads (gate doesn't block on this), but a **warning toast** notes the produced card won't hydrate its ruleset on load. |
+| INCR-01 | `card_begin` then `card_field`/`card_book_entry` blocks spread across **several separate messages** with unrelated narration between them | (final) `card_finalize` | The draft accumulates across all messages (persists in `chatMetadata`); the card assembles normally — incremental, non-consecutive emission works. |
 
 ### 4.17 Tiered context (lean core + keyword-triggered player detail)
 | ID | Precondition | Action | Expected |
@@ -281,6 +285,8 @@ Delete `harness-campaign`, `harness-campaign-plot`, and any `location-*` / `npc-
 | Unknown field key folded into system_prompt | CARDBLD-06 |
 | Code-fence tolerance / lenient header-body / empty-entry drop | CARDBLD-07, CARDBLD-08, CARDBLD-09 |
 | System def hydrated from a [System Definition] text block (lorebook or card book) | SYSDEF-LOAD-01 |
+| Card naming gate (block empty/designer name; derive from [System Definition]) | NAME-GATE-01, NAME-GATE-02, NAME-GATE-03 |
+| Incremental assembly across non-consecutive messages | INCR-01 |
 | HEADER_FORMAT | HDR-01…HDR-06, HDR-DUP-01 |
 
 **Commands → test IDs:** `#status/#character`→CMD-01; `#vitals`→TIM-01; `#skills`→CAP-PRG-01; `#inventory/#bag`→ENT-01; `#equipment`→POS-01; `#itembox`→POS-BOX-01; `#domain`→DOM-01; `#time`→TIM-01; `#quests`→QST-01; `#rep/#reputation`→REP-02; `#factions`→REP-01; `#events`→EVT-01; `#locations`→LOC-01; `#currency/#wallet`→ECO-01; `#rank`→PRG-01; `#companions`→`emit: entity companion`+`#companions`; `#legion/#hierarchy`→REG-08; `#boons`→CAP-01; `#titles`→CAP-02; `#abilities`→CAP-EVO-01; `#needs`→NDS-01; `#inspect`→INS-01; `#system/#ruleset`→SD-01; `#help`→CMD-help-01; custom/alias→CMD-02; `#party`→CMD-PTY-01; `#scene/#present`→CMD-PTY-01. (`#<category>s` commands are def-derived — see CAP-01/02.)
@@ -302,4 +308,4 @@ Delete `harness-campaign`, `harness-campaign-plot`, and any `location-*` / `npc-
 7. **Derived stats only fill unset/zero targets** — the harness leaves hp/mp/vigor blank deliberately.
 8. **NPC values are reconstructed from lorebook text** — verify NPC tests via the three `[NPC…]` entries' content, not chatMetadata.
 
-The block catalogue inside `test-harness-card.json` duplicates the live protocol; if the extension protocol changes, regenerate the catalogue (canonical templates: `system-designer-card.json`). The harness stamps `protocol_version 0.0.13`.
+The block catalogue inside `test-harness-card.json` duplicates the live protocol; if the extension protocol changes, regenerate the catalogue (canonical templates: `system-designer-card.json`). The harness stamps `protocol_version 0.0.14`.

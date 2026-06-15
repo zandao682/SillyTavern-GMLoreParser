@@ -1,5 +1,5 @@
 /**
- * GM Lore Parser — SillyTavern Extension  v0.0.13 (beta)
+ * GM Lore Parser — SillyTavern Extension  v0.0.14 (beta)
  *
  * Entry point only. All logic lives in modules/. Load order matters:
  * state → utils → lorebook → system → schema → entity → progression →
@@ -19,7 +19,7 @@
 // glpLoadModules (state.js, …) read MODULE_NAME / VERSION as globals, so expose
 // them on window. (MODULE_NAME is also the settings/chatMetadata key.)
 var MODULE_NAME = window.MODULE_NAME = 'gm-lore-parser';
-var VERSION     = window.VERSION     = '0.0.13';
+var VERSION     = window.VERSION     = '0.0.14';
 
 // Resolve our own install folder from this module's own URL so module loading
 // works regardless of the third-party folder name (a GitHub clone is typically
@@ -137,6 +137,7 @@ function applyCardBegin(raw) {
     draft.data   = {};
     draft.book_entries = [];
     console.log(`[${MODULE_NAME}] Card assembly opened: "${draft.name}".`);
+    SillyTavern.getContext().toastr?.info(`Building card: "${draft.name}" — sections will assemble as you confirm each stage; it downloads on finalize.`, 'GM Lore Parser', { timeOut: 5000 });
     return true;
 }
 
@@ -250,6 +251,27 @@ function _dedupeBookEntries(rawEntries) {
     return { entries: nonEmpty, dropped, shallow };
 }
 
+/** Resolve a trustworthy produced-card name. A model that forgets the
+ *  `[CARD_BEGIN] name:` line leaves draft.name empty → the card would ship with
+ *  data.name:'' and SillyTavern would import it under the DESIGNER's name ("The
+ *  Architect"). Fall back to the system name parsed from the emitted [System
+ *  Definition] entry; return '' (unresolved) if nothing usable is found. */
+function _resolveCardName(draftName, bookEntries) {
+    const ctx = SillyTavern.getContext();
+    const designer = String(ctx.characters?.[ctx.characterId]?.name || '').trim().toLowerCase();
+    const clean = String(draftName || '').trim();
+    const lc = clean.toLowerCase();
+    const bad = !clean || lc === designer || lc === 'generated gm card' || lc === 'generated card';
+    if (!bad) return clean;
+    const sd = (bookEntries || []).find(e => String(e.comment || '').trim() === (typeof SYSTEM_DEF_COMMENT !== 'undefined' ? SYSTEM_DEF_COMMENT : '[System Definition]'));
+    if (sd) {
+        const m = String(sd.content || '').match(/\[SYSTEM_DEF_BEGIN\][\s\S]*?\bname:\s*([^\n]+)/i);
+        const nm = m && m[1].trim();
+        if (nm) return /\bGM\b/i.test(nm) ? nm : `${nm} GM`;
+    }
+    return '';
+}
+
 function applyCardFinalize() {
     const draft = getCharState().card_draft;
     if (!draft.active) { console.warn(`[${MODULE_NAME}] CARD_FINALIZE outside an active card assembly — ignoring.`); return false; }
@@ -268,18 +290,27 @@ function applyCardFinalize() {
     // only honored once the mandatory fields and at least one REAL lore entry survive —
     // otherwise the draft stays active so emission can continue (mirrors the item-box
     // gate: reject the bad state rather than produce it).
+    const finalName = _resolveCardName(draft.name, bookEntries);
     const REQUIRED_FIELDS = ['system_prompt', 'first_mes', 'post_history_instructions'];
     const missing = REQUIRED_FIELDS.filter(k => !String(draft.data[k] || '').trim());
     if (bookEntries.length === 0) missing.push('a non-empty character_book entry');
+    if (!finalName) missing.push('a system name (emit [CARD_BEGIN] name: <System> GM)');
     if (missing.length) {
         console.warn(`[${MODULE_NAME}] CARD_FINALIZE blocked — incomplete card (missing: ${missing.join(', ')}). Draft stays open.`);
         SillyTavern.getContext().toastr?.warning(`Card not finalized — still missing: ${missing.join(', ')}. Keep emitting, then finalize.`, 'GM Lore Parser', { timeOut: 6000 });
         return false;
     }
-    const data = { ...draft.data, name: draft.name, character_version: VERSION };
+    // Non-blocking: a produced card with no [System Definition] entry won't auto-load
+    // its ruleset (the GM would have to re-emit [SYSTEM_DEF] at play time).
+    const hasSysDefEntry = bookEntries.some(e => String(e.comment || '').trim() === (typeof SYSTEM_DEF_COMMENT !== 'undefined' ? SYSTEM_DEF_COMMENT : '[System Definition]') && /\[SYSTEM_DEF_BEGIN\]/.test(e.content || ''));
+    if (!hasSysDefEntry) {
+        console.warn(`[${MODULE_NAME}] CARD_FINALIZE: no [System Definition] entry — produced card won't hydrate its ruleset on load.`);
+        SillyTavern.getContext().toastr?.warning('Card has no [System Definition] lore entry — its ruleset won\'t auto-load. Add one (content = the [SYSTEM_DEF] block).', 'GM Lore Parser', { timeOut: 7000 });
+    }
+    const data = { ...draft.data, name: finalName, character_version: VERSION };
     if (typeof data.tags === 'string') data.tags = data.tags.split(',').map(s => s.trim()).filter(Boolean);
     data.character_book = {
-        name: `${draft.name} Lore`, description: '', scan_depth: 4, token_budget: 2000, recursive_scanning: true,
+        name: `${finalName} Lore`, description: '', scan_depth: 4, token_budget: 2000, recursive_scanning: true,
         entries: bookEntries.map((e, i) => ({
             id: i, keys: e.keys, secondary_keys: [], comment: e.comment, content: e.content,
             constant: e.constant, selective: false, insertion_order: e.order, enabled: true,
@@ -626,7 +657,7 @@ async function renderSettingsPanel() {
         <div class="glp-field-setting"><label>Rule order</label><input  type="number" id="glp-rule-order"  class="text_pole" min="1" max="999" value="${settings.ruleOrder}"></div>
       </div>
       <div class="glp-info">
-        <b>v0.0.13 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
+        <b>v0.0.14 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
         <b>The Architect</b> designs systems and emits a produced GM card; small models build it incrementally via <b>chunked card assembly</b> (<code>[CARD_BEGIN]</code> → <code>[CARD_FIELD]</code> → <code>[CARD_BOOK_ENTRY]</code> → <code>[CARD_FINALIZE]</code>), assembled + downloaded by the extension (one-shot <code>[CARD_OUTPUT]</code> still supported).<br>
         <b>Capability progression</b> is configurable per category via named profiles: none · counter · use_tracked · points_tiers · xp_levels · milestone (Veridia PP/tier = the built-in <i>veridia_pp</i>).<br>
         <b>Tiered context</b> (default on): the player's always-on injection is a lean core (identity, vitals, attributes, conditions, title, rank, time); skills, possessions &amp; domains move to keyword-triggered <b>[Player:Skills]</b>/<b>[Player:Possessions]</b>/<b>[Player:Domains]</b> entries that load only when referenced. <code>capabilities.require_granted</code> rejects progression on un-owned skills.<br>
