@@ -63,11 +63,14 @@ function _possessionSummary(state) {
 }
 
 function injectCharacterContext() {
-    const s = getSettings();
-    if (!s.injectIntoContext) return;
-    const text = buildContextString(getCharState());
-    if (!text) return;
-    SillyTavern.getContext().setExtensionPrompt?.(MODULE_NAME + '_char', text, 1, s.contextDepth);
+    const s   = getSettings();
+    const ctx = SillyTavern.getContext();
+    // ALWAYS (re)write the prompt — never early-return on empty/disabled. setExtensionPrompt
+    // writes to ST's GLOBAL extension_prompts (not per-chat); returning early would leave a
+    // previous chat's character sheet lingering there and leak it into the new chat's context
+    // (cross-chat / cross-campaign). Writing '' clears the injection.
+    const text = (s.injectIntoContext ? buildContextString(getCharState()) : '') || '';
+    ctx.setExtensionPrompt?.(MODULE_NAME + '_char', text, 1, s.contextDepth);
 }
 
 // ── Keyword-triggered PLAYER detail entries ─────────────────────────────────────
