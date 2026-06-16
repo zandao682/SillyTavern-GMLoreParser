@@ -669,6 +669,11 @@ async function saveSystemDef(def, settings) {
         }
         await pruneSystemRuleEntries(def, settings);   // drop stale rules (feature off / disabled emit)
 
+        // Copyable block templates in context (Veridia pattern) — feature-gated.
+        for (const bf of buildBlockFormatEntries(def, settings))
+            await upsertEntry(settings.campaignLorebook, bf);
+        await pruneBlockFormatEntries(def, settings);
+
         // Always-on GM behavioral directives (realism guardrails). Constant so they
         // survive long context; terse so the cost is minimal.
         if (def.emit_directives !== false && (def.directives || []).length) {
@@ -868,6 +873,70 @@ async function pruneSystemRuleEntries(def, settings) {
     if (!settings.campaignLorebook) return;
     const keep = new Set(buildSystemRuleEntries(def, settings).map(e => e.comment));
     await removeEntriesByComment(settings.campaignLorebook, keep, 'SYSTEM_RULE');
+}
+
+// ── Copyable block templates ([Block Formats]) ──────────────────────────────
+// Veridia pattern: keep VERBATIM block templates in context so a small model copies
+// the exact tag shape instead of inventing markdown headings. A compact always-on
+// core (the workhorse blocks) + a keyword-triggered detail entry covering the other
+// ENABLED feature-blocks. (Lorebook content is prompt context, never parsed as an
+// emission — so literal tags here are safe.)
+var BLOCK_FORMATS_COMMENT      = '[Block Formats]';
+var BLOCK_FORMATS_MORE_COMMENT = '[Block Formats: More]';
+var BLOCK_FORMATS_INTRO = 'Emit these blocks VERBATIM — literal square-bracket tags, each on its own line, NEVER as markdown headings (## ...) or bold. Copy the shape; change the values. Emit a block only when the fiction calls for it.\nValues: a leading +N/-N is RELATIVE (e.g. "hp: -3" loses 3, "gold: +50" gains 50) on vitals/pools/currency/needs; a bare number is ABSOLUTE; list fields like conditions use "+add" / "-remove".';
+
+function buildBlockFormatEntries(def, settings) {
+    const f = def.features || {};
+    const on = k => f[k] !== false;
+    const vital = (def.derived_stats || []).find(d => /hp|health|vigor|stamina|wound/i.test(d.target))?.target
+               || def.derived_stats?.[0]?.target || 'hp';
+    const attr  = def.attributes?.[0]?.key || 'attribute';
+    const entries = [];
+
+    // (a) compact constant core — always-relevant workhorses
+    const core = [BLOCK_FORMATS_INTRO, '',
+        '[ENTITY_UPDATE_BEGIN]', 'type: player', `${vital}: -3`, 'conditions: +Wounded', '[ENTITY_UPDATE_END]', '',
+        '[ENTITY_EVENT_BEGIN]', 'type: player', 'reason: <why this lasting change happened>', `${attr}: <new value>`, '[ENTITY_EVENT_END]', '',
+        '[WORLD_TIME_BEGIN]', 'datetime: <in-world time>', 'elapsed: <e.g. 2h>', '[WORLD_TIME_END]',
+    ].join('\n');
+    const coreE = entryBase(BLOCK_FORMATS_COMMENT, ['block format', 'block formats', 'emit block', 'how to update', 'track state'],
+        core, (settings.ruleOrder ?? 50) - 4, settings, { type: 'BLOCK_FORMATS' });
+    coreE.constant = true;   // always in context — the copy target
+    entries.push(coreE);
+
+    // (b) keyword-triggered detail — only the OTHER enabled feature-blocks
+    const more = [];
+    if (on('capabilities')) {
+        more.push('[CAPABILITY_UPDATE_BEGIN]\ncapability: <name>\npoints: <N>\n[CAPABILITY_UPDATE_END]');
+        more.push('[CAPABILITY_BEGIN]\nname: <name>\ncategory: <category>\ndescription: <what it does>\n[CAPABILITY_END]');
+    }
+    if (on('reputation')) more.push('[REPUTATION_UPDATE_BEGIN]\nfaction: <name>\nchange: +N\nreason: <why>\n[REPUTATION_UPDATE_END]');
+    if (on('currency'))   more.push('[CURRENCY_UPDATE_BEGIN]\ngold: +N\n[CURRENCY_UPDATE_END]');
+    if (on('needs'))      more.push('[NEEDS_UPDATE_BEGIN]\nhunger: -N\n[NEEDS_UPDATE_END]');
+    if (on('quests'))     more.push('[QUEST_UPDATE_BEGIN]\nname: <quest>\nstatus: <status>\n[QUEST_UPDATE_END]');
+    if (on('ranks'))      more.push('[RANK_CHANGE_BEGIN]\ntype: adventurer\nrank: <rank>\nreason: <why>\n[RANK_CHANGE_END]');
+    if (on('party'))      more.push('[PARTY_UPDATE_BEGIN]\nadd: <Name> | <role>\nremove: <Name>\n[PARTY_UPDATE_END]');
+    if (on('scene'))      more.push('[SCENE_UPDATE_BEGIN]\nlocation: <where>\nenter: <Name> | <role>\nexit: <Name>\n[SCENE_UPDATE_END]');
+    if (def.equipment?.enabled) more.push('[ENTITY_UPDATE_BEGIN]\ntype: player\nequip: <slot>=<item>\n[ENTITY_UPDATE_END]');
+    if (def.inventory?.item_box) more.push('[ITEM_BOX_UPDATE_BEGIN]\nadd: <item> | <condition>\nremove: <item>\n[ITEM_BOX_UPDATE_END]');
+    more.push('[ENTITY_MEMORY_BEGIN]\ntype: npc\nname: <npc>\nmemory_type: episodic\ntitle: <short>\ncontent: <what happened>\n[ENTITY_MEMORY_END]');
+
+    if (more.length) {
+        const keys = normalizeKeys(['update', 'track', 'gain', 'lose', 'spend', 'equip', 'unequip', 'reputation',
+            'faction', 'currency', 'coin', 'quest', 'rank', 'need', 'hunger', 'skill', 'party', 'scene', 'memory', 'remember']);
+        const moreE = entryBase(BLOCK_FORMATS_MORE_COMMENT, keys,
+            [BLOCK_FORMATS_INTRO, '', ...more].join('\n\n'),
+            (settings.ruleOrder ?? 50), settings, { type: 'BLOCK_FORMATS' });
+        entries.push(moreE);
+    }
+    return entries;
+}
+
+/** Drop stale BLOCK_FORMATS entries (e.g. the "More" entry when all its features go off). */
+async function pruneBlockFormatEntries(def, settings) {
+    if (!settings.campaignLorebook) return;
+    const keep = new Set(buildBlockFormatEntries(def, settings).map(e => e.comment));
+    await removeEntriesByComment(settings.campaignLorebook, keep, 'BLOCK_FORMATS');
 }
 
 // ── Summary / panel ──────────────────────────────────────────────────────────

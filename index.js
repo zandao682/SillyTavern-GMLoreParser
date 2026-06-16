@@ -1,5 +1,5 @@
 /**
- * GM Lore Parser — SillyTavern Extension  v0.0.14 (beta)
+ * GM Lore Parser — SillyTavern Extension  v0.0.16 (beta)
  *
  * Entry point only. All logic lives in modules/. Load order matters:
  * state → utils → lorebook → system → schema → entity → progression →
@@ -19,7 +19,7 @@
 // glpLoadModules (state.js, …) read MODULE_NAME / VERSION as globals, so expose
 // them on window. (MODULE_NAME is also the settings/chatMetadata key.)
 var MODULE_NAME = window.MODULE_NAME = 'gm-lore-parser';
-var VERSION     = window.VERSION     = '0.0.14';
+var VERSION     = window.VERSION     = '0.0.16';
 
 // Resolve our own install folder from this module's own URL so module loading
 // works regardless of the third-party folder name (a GitHub clone is typically
@@ -191,6 +191,17 @@ function _stripCodeFences(s) {
     return String(s || '').replace(/^[ \t]*```[^\n]*$/gm, '');
 }
 
+/** Un-decorate block tags a small model wrapped in markdown. On a line whose only
+ *  meaningful content is a known [..._BEGIN]/[..._END] tag dressed up as a heading,
+ *  bold, or quote (e.g. `## [ENTITY_UPDATE_BEGIN]`, `**[ENTITY_UPDATE_END]**`,
+ *  `> [HEADER_FORMAT_BEGIN]`), strip the markers back to the bare tag so extractBlocks
+ *  still matches. Conservative: only rewrites lines that ALREADY contain a real
+ *  square-bracket BEGIN/END tag, so it can't corrupt prose or invent tags. */
+function _normalizeBlockTags(s) {
+    return String(s || '').replace(/^[ \t>]*[#*_]{1,3}[ \t]*(\[[A-Z][A-Z0-9_]*_(?:BEGIN|END)\])[ \t]*[#*_]{0,3}[ \t]*$/gm, '$1')
+                          .replace(/^[ \t>]+(\[[A-Z][A-Z0-9_]*_(?:BEGIN|END)\])[ \t]*$/gm, '$1');
+}
+
 // Lore entries shorter than this are flagged as shallow (logged, not dropped).
 const SHALLOW_ENTRY_CHARS = 120;
 
@@ -340,7 +351,7 @@ async function onMessageReceived(messageId) {
         return;
     }
 
-    const text = _stripCodeFences(message.mes);
+    const text = _normalizeBlockTags(_stripCodeFences(message.mes));
     let sheetChanged = false;
     const notifications = [];
 
@@ -657,7 +668,8 @@ async function renderSettingsPanel() {
         <div class="glp-field-setting"><label>Rule order</label><input  type="number" id="glp-rule-order"  class="text_pole" min="1" max="999" value="${settings.ruleOrder}"></div>
       </div>
       <div class="glp-info">
-        <b>v0.0.14 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
+        <b>v0.0.16 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
+        <b>v0.0.16:</b> per-subject memory lorebooks are now <b>campaign-scoped</b> (<code>&lt;campaign&gt;-npc-&lt;slug&gt;</code> / <code>&lt;campaign&gt;-location-&lt;slug&gt;</code>) so two campaigns sharing an NPC name no longer cross-contaminate; <b>core memories are keyword-triggered</b> (not always-on) — an off-screen subject's memories stay out of context until it's named or present.<br>
         <b>The Architect</b> designs systems and emits a produced GM card; small models build it incrementally via <b>chunked card assembly</b> (<code>[CARD_BEGIN]</code> → <code>[CARD_FIELD]</code> → <code>[CARD_BOOK_ENTRY]</code> → <code>[CARD_FINALIZE]</code>), assembled + downloaded by the extension (one-shot <code>[CARD_OUTPUT]</code> still supported).<br>
         <b>Capability progression</b> is configurable per category via named profiles: none · counter · use_tracked · points_tiers · xp_levels · milestone (Veridia PP/tier = the built-in <i>veridia_pp</i>).<br>
         <b>Tiered context</b> (default on): the player's always-on injection is a lean core (identity, vitals, attributes, conditions, title, rank, time); skills, possessions &amp; domains move to keyword-triggered <b>[Player:Skills]</b>/<b>[Player:Possessions]</b>/<b>[Player:Domains]</b> entries that load only when referenced. <code>capabilities.require_granted</code> rejects progression on un-owned skills.<br>
@@ -807,6 +819,14 @@ jQuery(async () => {
     eventSource.on(event_types.USER_MESSAGE_RENDERED, onUserMessageRendered);
     eventSource.on(event_types.GENERATION_STARTED,    onGenerationStarted);
     eventSource.on(event_types.CHAT_CHANGED,          onChatChanged);
+
+    // Belt-and-suspenders: flush any unsaved character state when the tab is hidden or
+    // closed (only acts if dirty — normal per-message saves already persist immediately).
+    if (!window.__glpFlushHooked) {
+        window.__glpFlushHooked = true;
+        window.addEventListener('pagehide', () => { flushCharStateIfDirty(); });
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushCharStateIfDirty(); });
+    }
     eventSource.on(event_types.APP_READY, async () => {
         await renderSettingsPanel();
         mountGlpDrawer();

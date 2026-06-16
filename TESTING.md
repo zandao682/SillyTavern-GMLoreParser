@@ -14,7 +14,7 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 
 | # | Step | Verify |
 |---|------|--------|
-| P1 | Install gm-lore-parser under `…/extensions/third-party/`, reload ST. **Disable/remove the standalone gm-narrative-header** if present. | Console: `[gm-lore-parser] v0.0.14 loaded…` listing modules incl. `scene, header`; its drawer appears under Extensions; no `[gm-narrative-header]` active-load line. |
+| P1 | Install gm-lore-parser under `…/extensions/third-party/`, reload ST. **Disable/remove the standalone gm-narrative-header** if present. | Console: `[gm-lore-parser] v0.0.16 loaded…` listing modules incl. `scene, header`; its drawer appears under Extensions; no `[gm-narrative-header]` active-load line. |
 | P2 | World Info → create lorebook **`harness-campaign`** (empty). | Appears in World Info. |
 | P3 | gm-lore-parser settings → **Campaign Lorebook = `harness-campaign`**. | Persists across reload. |
 | P4 | gm-lore-parser settings: Enabled ✔, Hide raw blocks ✔, Toasts ✔, Intercept # commands ✔, Inject into context ✔, Inject resolution ✔, all panels ✔, Scan user messages ✘. | Checkboxes match. |
@@ -59,7 +59,9 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 | ENT-ATTR-01 | SD-01 (def has 5 attributes) | `emit: entity player` whose `schema:` declares fields for only 2 attributes but sets values for all 5 | All 5 attributes show in the panel + value summary — the 3 undeclared ones are backfilled from the def's `attributes:` as `gm_event` fields (def is source of truth). An attribute with no value is not shown (no blank row). |
 | ENT-04 | SD-01, `emit: entity npc` ("Garrick Stone") | `emit: entity_update npc "Garrick Stone" attitude:Wary` | `[NPC:State] Garrick Stone` updated; `[NPC] Garrick Stone` (core) unchanged; `[NPC:Progression] Garrick Stone` reflects schema. |
 | ENT-EVT-01 | ENT-01 | `emit: entity_event player` (with reason) | gm_event field changes; an entry appears in `attr_change_log` (inspect via console `getCharState()`). |
-| ENT-MEM-01 | ENT-04 | `emit: entity_memory` | Per-NPC lorebook `npc-garrick-stone` created + linked; a `[Memory] Garrick Stone — …` entry added. |
+| ENT-MEM-01 | ENT-04 | `emit: entity_memory` | Campaign-scoped per-NPC lorebook `harness-campaign-npc-garrick-stone` created + linked; a `[Memory] Garrick Stone — …` entry added. The entry is **keyword-triggered** on the NPC name (`constant:false`) for an *episodic* memory; a `memory_type: core` memory is also `constant:false` but `order:1` (ranks first) — neither is always-on. |
+| ENT-MEM-02 | ENT-04 | `emit: entity_memory` with `memory_type: core` | Same book; the core memory entry has `constant:false`, `order:1`, and keys = the NPC name (`expandNameKeys`) — it loads only when "Garrick Stone" is referenced (narration, or the constant `[Scene]`/`[Party]` entry naming him → recursive scan), NOT in every prompt. |
+| ENT-MEM-SCOPE-01 | two campaigns | Set Campaign Lorebook `camp-a`, `emit: entity npc "Garrick Stone"` + `entity_memory`; switch Campaign Lorebook to `camp-b`, repeat | Two distinct books `camp-a-npc-garrick-stone` and `camp-b-npc-garrick-stone` — no shared `npc-garrick-stone`; memories do not bleed between campaigns. |
 
 ### 4.4 Capabilities (static)
 | ID | Precondition | Action | Expected |
@@ -121,7 +123,7 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 | POS-BOX-01 | SD with `inventory.item_box:true` (Veridia default) | `emit: item_box_update` | `#itembox` lists "Sword of Embers (Worn)", "Healing Draught"; the box also shows in the panel's Equipment & Inventory section + `[Player:Possessions]`. |
 | POS-BOX-02 | SD with an `inventory:` section that omits `item_box` | `emit: item_box_update` | **Rejected** — nothing stored; `#itembox` says "This system has no item box." (no invisible storage). |
 | POS-ITEM-01 | SD-01 | `emit: item` | `[Item] The Silthorn Compass` entry; condition label derived from durability (85→Good). |
-| LOC-01 | SD-01 | `emit: location "Thornwall Keep"` then `emit: location_memory "Thornwall Keep"` | `[Location] Thornwall Keep` entry; auto-creates + links `location-thornwall-keep`; a `[Memory] …` entry added there. |
+| LOC-01 | SD-01 | `emit: location "Thornwall Keep"` then `emit: location_memory "Thornwall Keep"` | `[Location] Thornwall Keep` entry; auto-creates + links campaign-scoped `harness-campaign-location-thornwall-keep`; a `[Memory] …` entry added there (keyword-triggered on the location name). |
 
 ### 4.13 Domains
 | ID | Precondition | Action | Expected |
@@ -174,6 +176,10 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 | NAME-GATE-02 | active draft, required fields + a `[System Definition]` entry whose `[SYSTEM_DEF]` has `name: Emberhold`, but `[CARD_BEGIN]` name missing/blank | `card_finalize` | Name is **derived** from the entry → `data.name == "Emberhold GM"` (the produced card never imports under the designer's name). |
 | NAME-GATE-03 | active draft, required fields + a real entry, but **no `[System Definition]` entry** present | `card_finalize` | Card still downloads (gate doesn't block on this), but a **warning toast** notes the produced card won't hydrate its ruleset on load. |
 | INCR-01 | `card_begin` then `card_field`/`card_book_entry` blocks spread across **several separate messages** with unrelated narration between them | (final) `card_finalize` | The draft accumulates across all messages (persists in `chatMetadata`); the card assembles normally — incremental, non-consecutive emission works. |
+| BLKFMT-01 | a System Definition loaded (campaign lorebook set) | inspect the campaign lorebook entries | A **constant** `[Block Formats]` entry exists (content has a literal `[ENTITY_UPDATE_BEGIN]`), and a keyword-triggered `[Block Formats: More]` entry exists whose templates are **feature-gated** (e.g. a `[CURRENCY_UPDATE]` template only when `currency` is on; `[ITEM_BOX_UPDATE]` only when `inventory.item_box`). Turning a feature off and reloading prunes its template. |
+| TAG-NORM-01 | any | `emit: block_formats_heading` (a block tag wrapped as `## [ENTITY_UPDATE_BEGIN]` / `**[ENTITY_UPDATE_END]**`) | The markdown markers are normalized away before extraction; the `[ENTITY_UPDATE]` parses and the player's HP/conditions change (the heading-wrapped tag is NOT ignored). |
+| STATE-FLUSH-01 | a state mutation just applied (`window.__glpStateDirty` may be set mid-save) | dispatch a `pagehide` event (or set `visibilityState=hidden`) | `flushCharStateIfDirty()` fires a `saveMetadata()` if dirty; no error. Normal case: dirty is already false (per-message save flushed it), so it's a no-op — confirm no exception. |
+| BAR-DELTA-01 | player with a `bar` field `hp` = 20 (max 20) | `[ENTITY_UPDATE] type: player, hp: -3` then later `hp: +5` then `hp: 12` | First → 17 (relative −3, floored at 0); then → 20 (relative +5, capped at max 20); then → 12 (bare number = absolute). A `value`-type field stays full-replacement (no delta). |
 
 ### 4.17 Tiered context (lean core + keyword-triggered player detail)
 | ID | Precondition | Action | Expected |
@@ -203,7 +209,7 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 | XC-PRES-01 | `emit: system_def presentation` (bar 60/30, max_pips 8, ascii 12, empty `--`), then ENT-01 + NDS | Bars recolor at the new thresholds; pools cap at 8 pips; `#needs` bars are 12 wide; empty lists show `--`. |
 | XC-HIDE-01 | hideBlocks ON; any emitted block | Rendered message shows the confirmation line only; raw `[…_BEGIN]…[…_END]` stripped. |
 | XC-PANEL-01 | Toggle "Reputation panel" OFF | That panel section disappears immediately; others remain. |
-| XC-CONST-01 | After SD-01 + SD-DIR-01 + PTY-01 + SCN-01 + an NPC with a core memory, inspect `harness-campaign` | **Exactly** these entries are `constant:true`: `[System Definition]`, `[GM Directives]`, `[Scene]`, `[Party]`, and NPC **core** memories. Everything else (`[System Rule]`, items, locations, factions, quests, world events, capabilities, episodic memories, NPC state/progression) is keyword-triggered (`constant:false`). |
+| XC-CONST-01 | After SD-01 + SD-DIR-01 + PTY-01 + SCN-01, inspect `harness-campaign` | **Exactly** these entries are `constant:true`: `[System Definition]`, `[GM Directives]`, `[Block Formats]`, `[Scene]`, `[Party]`. Everything else — `[System Rule]`, items, locations, factions, quests, world events, capabilities, NPC core/state/progression, **and ALL memories (core + episodic, in the per-subject books)** — is keyword-triggered (`constant:false`). (Changed in 0.0.16: NPC/location **core memories are no longer constant** — they're keyword-triggered on the subject name, `order:1` so they rank first when the subject is referenced.) |
 | XC-SET-01 | scanUserMessages ON; type a **user** message containing `[CURRENCY_UPDATE…]` | Currency block in a user message is **not** processed (only player `[ENTITY_BEGIN]` + `#` commands are). Documents actual behavior — a deviation is a bug. |
 
 ---
@@ -246,7 +252,7 @@ The header is built into gm-lore-parser (`modules/header.js`). Settings live in 
 
 ## 8. Teardown
 
-Delete `harness-campaign`, `harness-campaign-plot`, and any `location-*` / `npc-*` lorebooks; delete the harness chat; disable the extension if moving on.
+Delete `harness-campaign`, `harness-campaign-plot`, and any `harness-campaign-npc-*` / `harness-campaign-location-*` lorebooks (plus any legacy unscoped `npc-*` / `location-*` from pre-0.0.16 runs); delete the harness chat; disable the extension if moving on.
 
 ---
 
@@ -287,6 +293,9 @@ Delete `harness-campaign`, `harness-campaign-plot`, and any `location-*` / `npc-
 | System def hydrated from a [System Definition] text block (lorebook or card book) | SYSDEF-LOAD-01 |
 | Card naming gate (block empty/designer name; derive from [System Definition]) | NAME-GATE-01, NAME-GATE-02, NAME-GATE-03 |
 | Incremental assembly across non-consecutive messages | INCR-01 |
+| In-context block templates ([Block Formats], feature-gated) | BLKFMT-01 |
+| Tolerant tag parse (markdown-wrapped block tag) | TAG-NORM-01 |
+| State flush on tab hide/close | STATE-FLUSH-01 |
 | HEADER_FORMAT | HDR-01…HDR-06, HDR-DUP-01 |
 
 **Commands → test IDs:** `#status/#character`→CMD-01; `#vitals`→TIM-01; `#skills`→CAP-PRG-01; `#inventory/#bag`→ENT-01; `#equipment`→POS-01; `#itembox`→POS-BOX-01; `#domain`→DOM-01; `#time`→TIM-01; `#quests`→QST-01; `#rep/#reputation`→REP-02; `#factions`→REP-01; `#events`→EVT-01; `#locations`→LOC-01; `#currency/#wallet`→ECO-01; `#rank`→PRG-01; `#companions`→`emit: entity companion`+`#companions`; `#legion/#hierarchy`→REG-08; `#boons`→CAP-01; `#titles`→CAP-02; `#abilities`→CAP-EVO-01; `#needs`→NDS-01; `#inspect`→INS-01; `#system/#ruleset`→SD-01; `#help`→CMD-help-01; custom/alias→CMD-02; `#party`→CMD-PTY-01; `#scene/#present`→CMD-PTY-01. (`#<category>s` commands are def-derived — see CAP-01/02.)
@@ -308,4 +317,4 @@ Delete `harness-campaign`, `harness-campaign-plot`, and any `location-*` / `npc-
 7. **Derived stats only fill unset/zero targets** — the harness leaves hp/mp/vigor blank deliberately.
 8. **NPC values are reconstructed from lorebook text** — verify NPC tests via the three `[NPC…]` entries' content, not chatMetadata.
 
-The block catalogue inside `test-harness-card.json` duplicates the live protocol; if the extension protocol changes, regenerate the catalogue (canonical templates: `system-designer-card.json`). The harness stamps `protocol_version 0.0.14`.
+The block catalogue inside `test-harness-card.json` duplicates the live protocol; if the extension protocol changes, regenerate the catalogue (canonical templates: `system-designer-card.json`). The harness stamps `protocol_version 0.0.16`.

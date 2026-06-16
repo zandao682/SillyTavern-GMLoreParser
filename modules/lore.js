@@ -87,27 +87,42 @@ async function processNpcMemory(raw, settings) {
     // (npc/companion/…); the memory kind lives in `memory_type:`. Read that —
     // reading `type` here marked every core memory as episodic (non-constant).
     const memType  = (fields.memory_type || 'episodic').toLowerCase();
-    const isCore   = memType === 'core';
     const title    = fields.title || '';
     const content  = fields.content || fields.memory || '';
+    // Both core and episodic memories trigger on the NPC's name (core is no longer
+    // constant — see writeSubjectMemory), so core memories must carry the name keys too.
     const keywords = fields.keywords
         ? normalizeKeys(fields.keywords.split(','))
-        : isCore ? [] : expandNameKeys(npcName);
+        : expandNameKeys(npcName);
     return processNpcMemoryDirect(npcName, memType, title, content, keywords, settings);
 }
 
-/** Write a memory entry into a per-subject history lorebook (`<prefix>-<slug>`).
- *  Used for NPC histories (prefix 'npc') and location histories (prefix 'location'). */
+/** Per-subject history lorebook name, scoped to the active campaign so two campaigns
+ *  that both feature a "Garrick Stone" don't share one `npc-garrick-stone` book and
+ *  cross-contaminate. Mirrors the plot book's `${campaignLorebook}-plot` convention.
+ *  Falls back to the legacy unscoped name when no campaign lorebook is set. */
+function subjectBookName(prefix, subjectName, settings) {
+    const camp = settings.campaignLorebook ? `${settings.campaignLorebook}-` : '';
+    return `${camp}${prefix}-${slugify(subjectName)}`;
+}
+
+/** Write a memory entry into a per-subject history lorebook (`<campaign>-<prefix>-<slug>`).
+ *  Used for NPC histories (prefix 'npc') and location histories (prefix 'location').
+ *  Both core and episodic memories are keyword-triggered on the subject's name — a
+ *  subject's memories only enter context when the subject is referenced (named in
+ *  narration, or present via the constant [Scene]/[Party] entry → recursive scan).
+ *  Core memories merely rank first (lower order) among that subject's triggered entries;
+ *  they are NOT constant, so an off-screen NPC's memories don't sit in every prompt. */
 async function writeSubjectMemory(subjectName, prefix, memType, title, content, keywords, settings) {
     const isCore = memType === 'core';
-    const lb     = `${prefix}-${slugify(subjectName)}`;
+    const lb     = subjectBookName(prefix, subjectName, settings);
     await loadOrCreateLorebook(lb);
     await linkToChat(lb);
     const entry = {
         comment:    `[Memory] ${subjectName} — ${title || content.slice(0, 40)}`,
         key:        keywords, keysecondary: [],
         content:    content,
-        constant:   isCore, selective: false, selectiveLogic: 0,
+        constant:   false, selective: false, selectiveLogic: 0,
         order:      isCore ? 1 : 50, depth: settings.defaultScanDepth,
         disable:    false, addMemo: true,
         memo:       `${isCore ? 'Core' : 'Episodic'} memory — gm-lore-parser v${VERSION}`,
@@ -242,9 +257,9 @@ async function processLocationBlock(fields, settings) {
             { type: 'LOCATION', slug: slugify(name), location_type: fields.type || '', instance: isInstance, instance_type: isInstance ? (fields.instance_type || '') : '' }),
     });
 
-    // Auto-create a per-location history lorebook on discovery
+    // Auto-create a per-location history lorebook on discovery (campaign-scoped)
     if (cfg.create_history_lorebook) {
-        const lb = `location-${slugify(name)}`;
+        const lb = subjectBookName('location', name, settings);
         await loadOrCreateLorebook(lb);
         await linkToChat(lb);
     }
@@ -260,8 +275,9 @@ async function processLocationMemory(raw, settings) {
     const memType  = (fields.memory_type || fields.type || 'episodic').toLowerCase();
     const title    = fields.title || '';
     const content  = fields.content || fields.memory || '';
+    // Core and episodic both trigger on the location name (core is no longer constant).
     const keywords = fields.keywords ? normalizeKeys(fields.keywords.split(','))
-                                     : (memType === 'core' ? [] : expandNameKeys(name));
+                                     : expandNameKeys(name);
     return writeSubjectMemory(name, 'location', memType, title, content, keywords, settings);
 }
 

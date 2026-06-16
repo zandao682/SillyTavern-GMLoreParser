@@ -2,7 +2,7 @@
 
 A SillyTavern extension that automates campaign record-keeping for AI-run tabletop RPGs. The GM (or the Architect that designs a game) emits structured blocks at the end of messages; the extension parses them and maintains the ruleset, character/NPC/companion state, lorebooks, capabilities, world time, and more — automatically.
 
-**Version:** 0.0.14 (beta)
+**Version:** 0.0.16 (beta)
 **Requires:** SillyTavern 1.12.0+
 
 It is system-agnostic: a single `[SYSTEM_DEF]` block defines the ruleset (which subsystems exist, attributes, derived-stat formulas, progression model, optional classes, reputation/skill/needs settings, conflict resolution, and more). Player, NPC, Companion, and Creature share one stat-block engine via the unified `[ENTITY]` family; Boons/Titles/Passives/Evolution/Skills are one `[CAPABILITY]` concept with configurable progression. Levels, XP, classes, capabilities, reputation, needs, and the other subsystems are all opt-in — a classless, levelless, skill-based system is fully supported.
@@ -269,13 +269,13 @@ The `schema:` section defines every field — display type, panel group, mutabil
 ```
 [ENTITY_UPDATE_BEGIN]
 type: player
-hp: 11
+hp: -3
 conditions: +Poisoned, -Stunned
 blade_uses: +3
 [ENTITY_UPDATE_END]
 ```
 
-Writes only `gm_mutable` fields (and, for NPCs, declared dynamic fields). `+`/`-` add/remove list items; numeric fields are full replacement. Use-tracked skills auto-promote when their `_uses` counter crosses the threshold. For companions, this block also carries meta and AP: `loyalty`, `control_cost`, `role`, `status`, `ap_award: N`, `attribute_allocate: might:5, agility:3`.
+Writes only `gm_mutable` fields (and, for NPCs, declared dynamic fields). For list fields, `+`/`-` add/remove items. **Bar and pool fields (HP, stamina, MP, …) accept a relative `+N`/`-N` delta — floored at 0 and capped at their `max_field` — or a bare absolute number** (so `hp: -3` loses 3, `hp: 20` sets it to 20). Plain `value` fields are full replacement. Use-tracked skills auto-promote when their `_uses` counter crosses the threshold. For companions, this block also carries meta and AP: `loyalty`, `control_cost`, `role`, `status`, `ap_award: N`, `attribute_allocate: might:5, agility:3`.
 
 ### `[ENTITY_EVENT_BEGIN]` — milestone (GM_EVENT) changes
 
@@ -393,7 +393,7 @@ Realism guardrails that survive long context. Configured in the System Definitio
 - **World time** — `[WORLD_TIME]` advances the clock and applies resource regen + use-tracked checks to the player and all schema-bearing NPCs.
 - **Item** — `[ITEM_BEGIN]` / `[ITEM_UPDATE]`; condition labels derive from the system's `item_conditions`.
 - **Possessions** — equip/unequip via `[ENTITY_UPDATE]` (`equip: <slot>=<item>` / `unequip: <slot>`); `[ITEM_BOX_UPDATE]` (`add: <item> | <condition>` / `remove: <item>`) for the optional item box.
-- **Locations** — `[LOCATION_BEGIN]` (type/description/region, optional `instance`/`instance_type`) auto-creates a `location-{slug}` history lorebook; `[LOCATION_MEMORY]` appends to it. `[RULE_BEGIN]`, `[EVENT_BEGIN]` are generic lore.
+- **Locations** — `[LOCATION_BEGIN]` (type/description/region, optional `instance`/`instance_type`) auto-creates a campaign-scoped `{campaign}-location-{slug}` history lorebook; `[LOCATION_MEMORY]` appends to it. `[RULE_BEGIN]`, `[EVENT_BEGIN]` are generic lore.
 - **Designer** — the Architect produces a GM card. One-shot `[CARD_OUTPUT]{json}[CARD_OUTPUT_END]` downloads a complete card, but the default is **chunked assembly** so small models can build it across messages: `[CARD_BEGIN]` (open buffer, with `name:`) → `[CARD_FIELD]` (set/append a `data` field — header `key:`/`append:`, blank line, then the verbatim value; the large `system_prompt` is built with `append: true`) → `[CARD_BOOK_ENTRY]` (append a `character_book` entry — header `keys:`/`comment:`/`constant:`/`order:`, blank line, content) → `[CARD_FINALIZE]` (the extension assembles the V2 card and downloads it). The buffer lives in `card_draft`; `CARD_FIELD`/`CARD_BOOK_ENTRY`/`CARD_FINALIZE` are ignored outside an active `[CARD_BEGIN]`. The draft **persists across the whole conversation** (no reset/timeout), so the Architect builds the card **incrementally** — opening `[CARD_BEGIN]` early and emitting one section per confirmed design stage, finalizing last. **Finalize is gated**: it is refused (with a toast, draft left open) until the card has a real **name** (from `[CARD_BEGIN] name:`, or derived from the `[System Definition]` entry — never blank or the designer character's name), `system_prompt`, `first_mes`, `post_history_instructions`, and at least one non-empty `character_book` entry — so a model that finalizes early or forgets the name can't produce a broken/mis-named card. On assembly, **exact-duplicate lore entries** (same comment or same key-set, e.g. a chatty model restating the protocol entry) are de-duped, keeping the richer copy; **empty-content entries are dropped** and very short ones logged as shallow. A `[CARD_FIELD]` whose `key:` isn't a recognized chara_card_v2 `data` field (e.g. a model that splits `system_prompt` into section-named fields like `entity_protocol` while continuing) is **folded into `system_prompt`** as a titled section rather than stranded. Block parsing also **tolerates markdown code fences** (small models often wrap output in ```` ``` ````) and a **missing blank line** between a block's header and its body. These keep a noisy small-model emission assembling into a valid card.
 - **System definition loading** — the ruleset does not have to be emitted from the GM's `first_mes`. The extension hydrates the `[System Definition]` from (in order) the campaign lorebook entry's structured `extensions.system_def`, a `[SYSTEM_DEF]` **text block in that entry's content**, or a `[System Definition]` entry in the **active card's embedded `character_book`** ([system.js](SillyTavern/public/scripts/extensions/third-party/SillyTavern-GMLoreParser/modules/system.js) `loadSystemDefFromLorebook`). A `[HEADER_FORMAT]` block in the same content seeds the status header. So a produced GM card can carry its ruleset (and header format) in a constant `[System Definition]` lore entry and keep `first_mes` as pure in-world intro prose — the GM still *re-emitting* `[SYSTEM_DEF]` at runtime also works (self-populating).
 
@@ -506,6 +506,19 @@ These `[Player:*]` entries are `constant:false` (keyword-triggered) and rebuild 
 
 Turn this off with **Tiered context** in settings to fall back to the legacy behavior (the entire sheet injected always-on, no `[Player:*]` entries).
 
+### Block-emission reliability — `[Block Formats]`
+
+To help smaller models emit the protocol blocks consistently (rather than rendering a tag as a markdown heading), the extension auto-generates, from the active System Definition, copyable **verbatim block templates** in context — the same pattern that makes hand-authored reference cards reliable:
+
+- A compact **constant `[Block Formats]`** entry with the workhorse templates (`[ENTITY_UPDATE]`, `[ENTITY_EVENT]`, `[WORLD_TIME]`) always in context as a copy target.
+- A **keyword-triggered `[Block Formats: More]`** entry with templates for the *other enabled* feature-blocks (`[CAPABILITY_UPDATE]`, `[REPUTATION_UPDATE]`, `[CURRENCY_UPDATE]`, `[NEEDS_UPDATE]`, `[PARTY_UPDATE]`/`[SCENE_UPDATE]`, `[ITEM_BOX_UPDATE]`, `[QUEST_UPDATE]`, `[RANK_CHANGE]`, `[ENTITY_MEMORY]`, …), surfaced on emission-intent keywords.
+
+Both are feature-gated (only enabled blocks appear) and rebuilt whenever the def loads/changes. Separately, on the parsing side the extension **tolerates block tags wrapped in markdown** — a line like `## [ENTITY_UPDATE_BEGIN]` or `**[ENTITY_UPDATE_END]**` is normalized back to the bare tag before extraction, so a lightly-malformed emission still parses.
+
+### Player-state durability
+
+Tracked character state (vitals, attributes, skills, inventory, factions, quests, party/scene, …) lives in the chat's metadata and is written into the chat file **immediately after every updating message** (an awaited save, not debounced) — so a refresh, tab close, or server restart resumes exactly where you left off. State is **per-chat** (each campaign is its own chat); the ruleset and header format re-hydrate from the card's `[System Definition]` entry when a chat loads. As belt-and-suspenders, the extension also flushes any unsaved change when the tab is hidden/closed and schedules a debounced backstop save, closing the sub-second window where an in-flight save could be interrupted.
+
 ---
 
 ## Always-on vs. keyword-triggered lorebook entries
@@ -520,7 +533,11 @@ Only a handful of entries are **constant** (always in context): `[System Definit
 |---|---|---|
 | GM card embedded book | card author / Architect | Block-protocol reminder + system rules |
 | Campaign lorebook | extension | `[System Definition]` / `[GM Directives]` / `[Scene]` / `[Party]` (constant), `[Player:Skills]` / `[Player:Possessions]` / `[Player:Domains]` (keyword-triggered player detail), `[System Rule]` entries (keyword-triggered), NPC core/state/progression, creatures, factions+reputation, items, capabilities, quests, world events, locations, rules, events |
-| `npc-{slug}` lorebooks | extension (auto) | Per-NPC memories — core (constant) + episodic (keyword-triggered) |
+| `{campaign}-npc-{slug}` / `{campaign}-location-{slug}` lorebooks | extension (auto) | Per-subject memories — core + episodic, **both keyword-triggered** on the subject's name (core ranks first). Names are **campaign-scoped** (prefixed with the campaign lorebook) so two campaigns that share a subject name don't cross-contaminate. Falls back to the legacy unscoped `npc-{slug}` / `location-{slug}` when no campaign lorebook is set. |
+
+> **Memory context economy.** A subject's memories enter context only when the subject is referenced — named in narration, or present via the constant `[Scene]`/`[Party]` entry (whose content names them → recursive scan). An off-screen NPC's core memories are **not** force-injected. Core memories are not `constant`; they simply rank above episodic when their subject triggers.
+>
+> **Upgrade note (0.0.16).** Side-book names are now campaign-scoped. Pre-0.0.16 unscoped books (`npc-{slug}`, `location-{slug}`) are **not** auto-migrated — the old shared name can't be attributed to a specific campaign. Single-campaign users can rename them to `{campaign}-npc-{slug}` to keep history; otherwise new scoped books are created going forward.
 
 **Keyword triggering.** Keyword-triggered entries load into context only when the chat mentions one of their keys. The parser normalizes every key set (trim, lowercase, dedup) and, when you don't supply explicit `keywords:`, derives them from the entry's name via `expandNameKeys`: the full lowercased name plus a conservative significant sub-phrase (e.g. "The Lost Heir" also triggers on "lost heir"), never bare common words. `[System Rule]` entries derive their keys from the System Definition's own vocabulary (tier names, rank labels, attitudes, need meters, dice tokens…). When you do supply `keywords:`, give 2–5 specific, distinctive terms and avoid generic words, which over-trigger.
 

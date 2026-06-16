@@ -18,10 +18,10 @@ Because the Architect is conversational, Part A acceptance is qualitative (judge
 
 | # | Step | Verify |
 |---|------|--------|
-| P1 | gm-lore-parser v0.0.14 installed and enabled. | Console: `[gm-lore-parser] v0.0.14 loaded…`. |
+| P1 | gm-lore-parser v0.0.15 installed and enabled. | Console: `[gm-lore-parser] v0.0.15 loaded…`. |
 | P2 | A local LLM connected with a **correct instruct template** and an adequate response-token / context budget (card sections are emitted incrementally, but the keystone `[System Definition]` entry + `system_prompt` sections are long). | A test generation completes without truncation. |
 | P2.5 | **Disable any immersive/roleplay global System Prompt** (Advanced Formatting → System Prompt) while designing. A prose-roleplay system note (e.g. the "Roleplay - Immersive" preset: *"write at least one paragraph… be descriptive and immersive…"*) is prepended on top of the Architect's own prompt and **overrides structured output** — the model writes narration *about* emitting blocks instead of emitting them. Use a neutral/empty System Prompt for the Architect; keep the roleplay one for actual play. | A design turn that should emit a card section (e.g. opening `[CARD_BEGIN]` at Stage 2, or the `[System Definition]` entry at Stage 8) emits real `[..._BEGIN]` tags, not prose like "I will now generate…". |
-| P3 | Import `system-designer-card.json` (Characters → Import). Confirm `data.character_version` shows `0.0.14`. | Card present; version visible in card details. |
+| P3 | Import `system-designer-card.json` (Characters → Import). Confirm `data.character_version` shows `0.0.15`. | Card present; version visible in card details. |
 | P4 | Set the extension's **Campaign Lorebook to blank** while chatting with the Architect (it produces output, it must not write campaign lore). | No campaign lorebook selected. |
 | P5 | Start a **new chat** with the Architect. | Greeting asks for content framing + the game feeling. |
 

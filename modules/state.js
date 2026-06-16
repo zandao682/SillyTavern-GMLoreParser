@@ -196,6 +196,23 @@ function getCharState() {
     return s;
 }
 
+// Durability: state is written into the chat JSONL immediately on each call (awaited,
+// not debounced). The dirty flag + flushCharStateIfDirty() (wired to pagehide /
+// visibilitychange in index.js) cover the narrow window of an interrupted in-flight
+// save; the debounced backstop re-flushes a save that ST skipped under save-contention.
 async function saveCharState() {
-    await SillyTavern.getContext().saveMetadata();
+    window.__glpStateDirty = true;
+    try {
+        await SillyTavern.getContext().saveMetadata();
+        window.__glpStateDirty = false;
+    } catch (e) {
+        console.warn(`[${MODULE_NAME}] saveCharState failed (will retry via backstop):`, e);
+    }
+    try { SillyTavern.getContext().saveChatDebounced?.(); } catch { /* optional API */ }
+}
+
+/** Best-effort flush of unsaved state on tab hide/close (only fires if dirty). */
+async function flushCharStateIfDirty() {
+    if (!window.__glpStateDirty) return;
+    try { await SillyTavern.getContext().saveMetadata(); window.__glpStateDirty = false; } catch { /* best effort */ }
 }

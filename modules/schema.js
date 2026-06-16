@@ -21,9 +21,13 @@ function applyFieldValue(key, val, desc, values) {
         } else {
             values[key] = ops;
         }
-    } else if (ft === 'pool') {
+    } else if (ft === 'pool' || ft === 'bar') {
+        // pools and bars (HP/stamina/warmth/MP) accept relative deltas: a leading
+        // +/- adjusts the current value (floored at 0, capped at max_field); a bare
+        // number sets it absolutely. Deltas are what a GM naturally writes for
+        // damage/healing ("hp: -3"), and the most reliable thing a small model emits.
         const cur = parseInt(values[key]) || 0;
-        values[key] = val.startsWith('+') || val.startsWith('-')
+        values[key] = (typeof val === 'string' && (val.startsWith('+') || val.startsWith('-')))
             ? Math.max(0, cur + parseInt(val))
             : (parseInt(val) || 0);
         if (desc?.max_field && values[desc.max_field] !== undefined)
