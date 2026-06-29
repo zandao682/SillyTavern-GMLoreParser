@@ -276,7 +276,15 @@ gm-lore-parser writes standard World Info entries; SillyTavern's Vectors extensi
 
 | ID | Precondition | Action | Expected |
 |----|----|----|----|
-| VEC-01 | Built-in **Vector Storage** enabled with **World Info vectorization** on the campaign lorebook (local `transformers` source ok); a `[Memory]`/`[NPC]` entry exists whose keys would NOT match | Send a chat message that references the subject **only semantically** (no keyword hit) | Vectors retrieves + injects the relevant GLP entry by meaning; keyword triggering remains the primary path and is unaffected. (Manual/config test; documents the integration, a miss here is a Vectors config issue, not a GLP bug.) |
+| VEC-01 | Built-in **Vector Storage** enabled with **Vectorize all / World Info** (local `transformers` source ok); a GLP `[Memory]` entry exists in a **chat-linked** per-subject book (e.g. `…-npc-<slug>`) whose keys would NOT match the probe | Send a message that paraphrases the memory **only semantically** (no key/name overlap) | Vectors force-activates the GLP entry by meaning via `WORLDINFO_FORCE_ACTIVATE` (keyword triggering could not have fired). **Verified live 0.0.17** (paraphrase "a warrior showed clemency…" activated `[Memory] Garrick Stone — Spared the bandit`, keys `bandit/mercy`). Notes: (1) retrieval operates on **WI-active books** — GLP's per-subject memory/NPC/location books are chat-linked, but the main campaign book's constant entries are injected by GLP directly (not via the WI engine), so they aren't vectorized; (2) relevance quality depends on the embedding model + query, not GLP — a miss is a Vectors config/quality issue, not a GLP bug. |
+
+### Chat-linking of generated lorebooks (0.0.17)
+All campaign-generated lorebooks are auto-linked to the active chat so their entries are pulled by keyword World Info **and** Vector Storage. Implemented in `linkCampaignBooks()` (`modules/lorebook.js`), called from `onChatChanged` and the Campaign-Lorebook settings binding. Note: the campaign book's **constant** entries (`[System Definition]`/`[GM Directives]`/`[Scene]`/`[Party]`) only reach the model once the book is chat-linked — GLP injects only the player sheet via `setExtensionPrompt`, so there is no duplication.
+
+| ID | Precondition | Action | Expected |
+|----|----|----|----|
+| LINK-01 | Campaign Lorebook set; a `…-plot` and `…-npc-*` book already exist | Start a **new chat** (or re-set the Campaign Lorebook) | `chatMetadata.world_info` includes the campaign book, the plot book, and every `…-npc-*` / `…-location-*` book. **Verified live 0.0.17** (`["harness-campaign","harness-campaign-plot","harness-campaign-npc-garrick-stone"]`). |
+| LINK-02 | LINK-01 done | `emit: quest`, then mention the quest's keyword in a later message | The `[Quest]` entry (in the now-linked campaign book) triggers via keyword WI; no extension errors from the now-active constant entries. |
 
 ### Function tools (Stage 3) — `useFunctionTools` (chat-completion backends only)
 Registers `glp_record_memory`, `glp_entity_update`, `glp_currency_update`, `glp_quest_update`, `glp_reputation_update` via `registerFunctionTool`; each routes into the existing block handler. Gated double: off by default, and `shouldRegister` re-checks the setting. Implemented in `modules/tools.js`.

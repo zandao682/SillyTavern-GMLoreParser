@@ -65,14 +65,38 @@ async function removeEntriesByComment(lorebookName, keepSet, ofType) {
 
 /** Attach a lorebook to the current chat (idempotent). */
 async function linkToChat(name) {
+    return linkToChatMany([name]);
+}
+
+/** Attach several lorebooks to the current chat in a single metadata save (idempotent). */
+async function linkToChatMany(names) {
     const { chatMetadata, saveMetadata } = SillyTavern.getContext();
-    if (!chatMetadata.world_info) chatMetadata.world_info = [];
     if (!Array.isArray(chatMetadata.world_info))
-        chatMetadata.world_info = [chatMetadata.world_info].filter(Boolean);
-    if (!chatMetadata.world_info.includes(name)) {
-        chatMetadata.world_info.push(name);
-        await saveMetadata();
-    }
+        chatMetadata.world_info = chatMetadata.world_info ? [chatMetadata.world_info].filter(Boolean) : [];
+    let added = false;
+    for (const name of names)
+        if (name && !chatMetadata.world_info.includes(name)) { chatMetadata.world_info.push(name); added = true; }
+    if (added) await saveMetadata();
+    return added;
+}
+
+/** Link every lorebook this extension generates for the active campaign to the current
+ *  chat, so their entries are pulled by BOTH keyword World Info and Vector Storage.
+ *  Covers the campaign book (its constant [System Definition]/[GM Directives]/[Scene]/
+ *  [Party] entries only reach the model when the book is chat-active), the plot book,
+ *  and every campaign-scoped per-subject memory book (`<campaign>-npc-*` /
+ *  `<campaign>-location-*`). Called on chat change and when the campaign lorebook is set. */
+async function linkCampaignBooks(settings) {
+    const camp = settings?.campaignLorebook;
+    if (!camp) return false;
+    const ctx  = SillyTavern.getContext();
+    const all  = (ctx.getWorldInfoNames ? ctx.getWorldInfoNames() : []) || [];
+    const plot = settings.plotLorebook || `${camp}-plot`;
+    const link = [camp];
+    if (all.includes(plot)) link.push(plot);
+    for (const n of all)
+        if (n.startsWith(`${camp}-npc-`) || n.startsWith(`${camp}-location-`)) link.push(n);
+    return linkToChatMany(link);
 }
 
 /** Build a base lorebook entry object with all required fields. */

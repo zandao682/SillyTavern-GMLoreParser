@@ -589,6 +589,7 @@ async function handlePlayerSheetBlocks(message, messageId, settings) {
 function onGenerationStarted() { injectCharacterContext(); }
 async function onChatChanged() {
     await loadSystemDefFromLorebook(getSettings());
+    await linkCampaignBooks(getSettings());   // ensure all generated campaign books are WI-active for this chat
     const st = getCharState();
     if (st.name) augmentSchemaWithDefAttributes(st.schema, st.values);   // backfill panel fields for def attributes (existing chars / def changes)
     refreshStatusPanel();
@@ -680,7 +681,7 @@ async function renderSettingsPanel() {
       </div>
       <div class="glp-info">
         <b>v0.0.17 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
-        <b>v0.0.17:</b> opt-in <b>memory enrichment</b> (summarize the recent scene into [Memory] bodies via a quiet side-prompt; raw text is the fallback); a <b>Semantic recall</b> note for pairing with built-in Vector Storage; and opt-in <b>function tools</b> for state changes on chat-completion backends (inert on text-completion — the prose-block path is unchanged).<br>
+        <b>v0.0.17:</b> opt-in <b>memory enrichment</b> (summarize the recent scene into [Memory] bodies via a personaless side-prompt; raw text is the fallback); all generated campaign lorebooks (campaign, plot, per-subject) are now <b>auto-linked to the active chat</b> so their entries are pulled by keyword World Info <i>and</i> Vector Storage; a <b>Semantic recall</b> note for pairing with built-in Vector Storage; and opt-in <b>function tools</b> for state changes on chat-completion backends (inert on text-completion — the prose-block path is unchanged).<br>
         <b>v0.0.16:</b> per-subject memory lorebooks are now <b>campaign-scoped</b> (<code>&lt;campaign&gt;-npc-&lt;slug&gt;</code> / <code>&lt;campaign&gt;-location-&lt;slug&gt;</code>) so two campaigns sharing an NPC name no longer cross-contaminate; <b>core memories are keyword-triggered</b> (not always-on) — an off-screen subject's memories stay out of context until it's named or present.<br>
         <b>The Architect</b> designs systems and emits a produced GM card; small models build it incrementally via <b>chunked card assembly</b> (<code>[CARD_BEGIN]</code> → <code>[CARD_FIELD]</code> → <code>[CARD_BOOK_ENTRY]</code> → <code>[CARD_FINALIZE]</code>), assembled + downloaded by the extension (one-shot <code>[CARD_OUTPUT]</code> still supported).<br>
         <b>Capability progression</b> is configurable per category via named profiles: none · counter · use_tracked · points_tiers · xp_levels · milestone (Veridia PP/tier = the built-in <i>veridia_pp</i>).<br>
@@ -696,7 +697,7 @@ async function renderSettingsPanel() {
     $('#extensions_settings2').append(html);
     const save = () => SillyTavern.getContext().saveSettingsDebounced();
     $('#glp-enabled').on('change', function()    { getSettings().enabled          = this.checked; save(); });
-    $('#glp-lorebook').on('change', function()   { getSettings().campaignLorebook = this.value;   save(); });
+    $('#glp-lorebook').on('change', async function() { getSettings().campaignLorebook = this.value; save(); await linkCampaignBooks(getSettings()); });
     $('#glp-hide').on('change', function()       { getSettings().hideBlocks       = this.checked; save(); });
     $('#glp-notify').on('change', function()     { getSettings().notifyOnSave     = this.checked; save(); });
     $('#glp-scan-user').on('change', function()  { getSettings().scanUserMessages = this.checked; save(); });
