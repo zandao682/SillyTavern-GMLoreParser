@@ -14,7 +14,7 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 
 | # | Step | Verify |
 |---|------|--------|
-| P1 | Install gm-lore-parser under `…/extensions/third-party/`, reload ST. **Disable/remove the standalone gm-narrative-header** if present. | Console: `[gm-lore-parser] v0.0.16 loaded…` listing modules incl. `scene, header`; its drawer appears under Extensions; no `[gm-narrative-header]` active-load line. |
+| P1 | Install gm-lore-parser under `…/extensions/third-party/`, reload ST. **Disable/remove the standalone gm-narrative-header** if present. | Console: `[gm-lore-parser] v0.0.17 loaded…` listing modules incl. `scene, header`; its drawer appears under Extensions; no `[gm-narrative-header]` active-load line. |
 | P2 | World Info → create lorebook **`harness-campaign`** (empty). | Appears in World Info. |
 | P3 | gm-lore-parser settings → **Campaign Lorebook = `harness-campaign`**. | Persists across reload. |
 | P4 | gm-lore-parser settings: Enabled ✔, Hide raw blocks ✔, Toasts ✔, Intercept # commands ✔, Inject into context ✔, Inject resolution ✔, all panels ✔, Scan user messages ✘. | Checkboxes match. |
@@ -256,6 +256,39 @@ Delete `harness-campaign`, `harness-campaign-plot`, and any `harness-campaign-np
 
 ---
 
+## 8b. v0.0.17 features — memory enrichment · semantic recall · function tools
+
+These are **settings-driven**, not new blocks. Enable them in the gm-lore-parser settings panel.
+
+### Memory enrichment (Stage 1) — `enrichMemories` / `enrichMemoryWindow`
+Composes a richer `[Memory]` body by summarizing the recent transcript (a quiet side-generation on the active connection — works on text- and chat-completion backends). Raw block text is the guaranteed fallback. Implemented in `enrichMemoryContent()` + `writeSubjectMemory` (`modules/lore.js`).
+
+| ID | Precondition | Action | Expected |
+|----|----|----|----|
+| ENRICH-01 | SD-01 + ENT-04 (an NPC exists); **Enrich memory content ON**; ≥2 prior chat messages | `emit: entity_memory` | The written `[Memory]` entry (in `…-npc-<slug>`) `content` is a 2–4 sentence prose summary drawn from the recent transcript (not the terse block text); the entry's `extensions.enriched === true`. Zero extension errors. |
+| ENRICH-02 | **Enrich memory content OFF** (default) | `emit: entity_memory` | Behaves exactly as ≤0.0.16: `content` is the model's raw block text; `extensions.enriched === false`. |
+| ENRICH-03 | Enrich ON but force a generation failure (e.g. disconnect the backend) | `emit: entity_memory` | Falls back to the raw block text (never empty, never throws); console warns "memory enrichment failed; using raw content". |
+| ENRICH-04 | Enrich ON | `emit: location_memory` | Same enrichment path applies to location memories (shared `writeSubjectMemory` choke point). |
+
+### Semantic recall (Stage 2) — built-in Vector Storage (config, not GLP code)
+gm-lore-parser writes standard World Info entries; SillyTavern's Vectors extension ingests them when its World-Info vectorization is enabled. No GLP retrieval code — Vectors owns injection. Best paired with ENRICH (richer bodies embed better).
+
+| ID | Precondition | Action | Expected |
+|----|----|----|----|
+| VEC-01 | Built-in **Vector Storage** enabled with **World Info vectorization** on the campaign lorebook (local `transformers` source ok); a `[Memory]`/`[NPC]` entry exists whose keys would NOT match | Send a chat message that references the subject **only semantically** (no keyword hit) | Vectors retrieves + injects the relevant GLP entry by meaning; keyword triggering remains the primary path and is unaffected. (Manual/config test; documents the integration, a miss here is a Vectors config issue, not a GLP bug.) |
+
+### Function tools (Stage 3) — `useFunctionTools` (chat-completion backends only)
+Registers `glp_record_memory`, `glp_entity_update`, `glp_currency_update`, `glp_quest_update`, `glp_reputation_update` via `registerFunctionTool`; each routes into the existing block handler. Gated double: off by default, and `shouldRegister` re-checks the setting. Implemented in `modules/tools.js`.
+
+| ID | Precondition | Action | Expected |
+|----|----|----|----|
+| TOOL-01 | **Local text-completion backend** (gemma); **Function tools ON** | inspect registered tools; run normal play | **No** GLP tools surface to the model (ST sends no tools on text-completion); the prose-block path is byte-for-byte unchanged. The local experience is unaffected. |
+| TOOL-02 | A **chat-completion** backend (Claude/OpenAI/etc.); **Function tools ON** | Prompt a state change (e.g. "the player takes 5 damage") | Model calls `glp_entity_update`; the same state mutation lands as the equivalent `[ENTITY_UPDATE]` block would; panel/context update; no prose block required. |
+| TOOL-03 | Function tools **OFF** (default) | any backend | No GLP tools registered (`window.__glpToolNames` empty); toggling ON then OFF registers then unregisters them. |
+| TOOL-04 | Tools ON; model emits BOTH a tool call AND the equivalent prose block in one turn | observe | Idempotent upserts (memory) are fine; delta blocks may double-apply — current safeguard is the per-tool "use tool OR block, never both" instruction. (Automatic turn-level de-dup is future work — documented limitation.) |
+
+---
+
 ## 9. Coverage matrix
 
 **Blocks → test IDs**
@@ -297,6 +330,9 @@ Delete `harness-campaign`, `harness-campaign-plot`, and any `harness-campaign-np
 | Tolerant tag parse (markdown-wrapped block tag) | TAG-NORM-01 |
 | State flush on tab hide/close | STATE-FLUSH-01 |
 | HEADER_FORMAT | HDR-01…HDR-06, HDR-DUP-01 |
+| Memory enrichment (0.0.17 setting) | ENRICH-01…ENRICH-04 |
+| Semantic recall (Vector Storage config) | VEC-01 |
+| Function tools (chat-completion backends) | TOOL-01…TOOL-04 |
 
 **Commands → test IDs:** `#status/#character`→CMD-01; `#vitals`→TIM-01; `#skills`→CAP-PRG-01; `#inventory/#bag`→ENT-01; `#equipment`→POS-01; `#itembox`→POS-BOX-01; `#domain`→DOM-01; `#time`→TIM-01; `#quests`→QST-01; `#rep/#reputation`→REP-02; `#factions`→REP-01; `#events`→EVT-01; `#locations`→LOC-01; `#currency/#wallet`→ECO-01; `#rank`→PRG-01; `#companions`→`emit: entity companion`+`#companions`; `#legion/#hierarchy`→REG-08; `#boons`→CAP-01; `#titles`→CAP-02; `#abilities`→CAP-EVO-01; `#needs`→NDS-01; `#inspect`→INS-01; `#system/#ruleset`→SD-01; `#help`→CMD-help-01; custom/alias→CMD-02; `#party`→CMD-PTY-01; `#scene/#present`→CMD-PTY-01. (`#<category>s` commands are def-derived — see CAP-01/02.)
 
@@ -317,4 +353,4 @@ Delete `harness-campaign`, `harness-campaign-plot`, and any `harness-campaign-np
 7. **Derived stats only fill unset/zero targets** — the harness leaves hp/mp/vigor blank deliberately.
 8. **NPC values are reconstructed from lorebook text** — verify NPC tests via the three `[NPC…]` entries' content, not chatMetadata.
 
-The block catalogue inside `test-harness-card.json` duplicates the live protocol; if the extension protocol changes, regenerate the catalogue (canonical templates: `system-designer-card.json`). The harness stamps `protocol_version 0.0.16`.
+The block catalogue inside `test-harness-card.json` duplicates the live protocol; if the extension protocol changes, regenerate the catalogue (canonical templates: `system-designer-card.json`). The harness stamps `protocol_version 0.0.17`.

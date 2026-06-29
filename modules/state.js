@@ -108,6 +108,10 @@ var DEFAULT_SETTINGS = Object.freeze({
     // ── Narrative header (merged from gm-narrative-header) ──────────────────
     headerEnabled: true, headerUseFormatBlock: true, headerManualFormat: '',
     headerSeparator: '---', headerShowOnEveryMsg: true,
+    // ── 0.0.17 additions ─────────────────────────────────────────────────────
+    enrichMemories: false,     // summarize the recent scene into [Memory] bodies (quiet-prompt)
+    enrichMemoryWindow: 10,    // trailing chat messages fed to the memory summarizer
+    useFunctionTools: false,   // register block tools on chat-completion backends (inert on text-completion)
 });
 
 var DEFAULT_CHAR_STATE = Object.freeze({

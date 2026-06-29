@@ -2,7 +2,7 @@
 
 A SillyTavern extension that automates campaign record-keeping for AI-run tabletop RPGs. The GM (or the Architect that designs a game) emits structured blocks at the end of messages; the extension parses them and maintains the ruleset, character/NPC/companion state, lorebooks, capabilities, world time, and more — automatically.
 
-**Version:** 0.0.16 (beta)
+**Version:** 0.0.17 (beta)
 **Requires:** SillyTavern 1.12.0+
 
 It is system-agnostic: a single `[SYSTEM_DEF]` block defines the ruleset (which subsystems exist, attributes, derived-stat formulas, progression model, optional classes, reputation/skill/needs settings, conflict resolution, and more). Player, NPC, Companion, and Creature share one stat-block engine via the unified `[ENTITY]` family; Boons/Titles/Passives/Evolution/Skills are one `[CAPABILITY]` concept with configurable progression. Levels, XP, classes, capabilities, reputation, needs, and the other subsystems are all opt-in — a classless, levelless, skill-based system is fully supported.
@@ -565,6 +565,21 @@ Only a handful of entries are **constant** (always in context): `[System Definit
 | Header separator | `---` | String placed between the header and the narrative |
 | Show on every message | on | Render every message vs. only when a fresh format block arrives |
 | Manual header format | — | Fallback format string when no block is captured |
+| **Enrich memory content** | off | Summarize the recent scene into `[Memory]` bodies via a quiet side-prompt (raw block text is the fallback) — see below |
+| Memory enrichment window | 10 | Trailing chat messages fed to the memory summarizer |
+| **Function tools** | off | Register state-change tools for chat-completion backends (inert on text-completion) — see below |
+
+---
+
+## Memory enrichment, semantic recall & function tools (0.0.17)
+
+Three optional, independent enhancements. All default **off** and all keep the local text-completion path unchanged.
+
+**Memory enrichment.** With *Enrich memory content* on, when an `[ENTITY_MEMORY]`/`[LOCATION_MEMORY]` block is processed the extension composes the entry body by summarizing the last *N* chat messages (the *enrichment window*) involving the subject — a quiet side-generation on your active connection (works on any backend). The summarizer is constrained to the transcript (no invention), and if it fails or returns empty the model's **raw block text is used unchanged**. Enriched entries carry `extensions.enriched: true`. Trade-off: one extra short generation per memory, so it's opt-in.
+
+**Semantic recall (Vector Storage).** gm-lore-parser writes standard World Info entries; SillyTavern's **built-in Vector Storage** can retrieve them *by meaning* rather than only by keyword. Enable Vector Storage and turn on **World-Info vectorization** against your Campaign Lorebook (the local `transformers` embedding source works offline). This complements — does not replace — keyword triggering, and works best with memory enrichment on (richer bodies embed better). No gm-lore-parser code owns retrieval; Vectors handles injection.
+
+**Function tools (chat-completion backends).** With *Function tools* on, the extension registers `glp_record_memory`, `glp_entity_update`, `glp_currency_update`, `glp_quest_update`, and `glp_reputation_update` via SillyTavern's function-calling API. A capable model can call these structured tools instead of emitting prose `[BLOCK]` tags — more reliable than hoping a small model formats a literal block. Each tool routes into the same handler the block path uses. **This is inert on text-completion backends** (SillyTavern only surfaces tools where function-calling is supported), so the local-model prose-block path is unchanged. Use the tool *or* the equivalent block in a reply, never both (delta updates would otherwise double-apply).
 
 ---
 

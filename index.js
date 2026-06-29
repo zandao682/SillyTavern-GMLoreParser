@@ -1,5 +1,5 @@
 /**
- * GM Lore Parser — SillyTavern Extension  v0.0.16 (beta)
+ * GM Lore Parser — SillyTavern Extension  v0.0.17 (beta)
  *
  * Entry point only. All logic lives in modules/. Load order matters:
  * state → utils → lorebook → system → schema → entity → progression →
@@ -19,7 +19,7 @@
 // glpLoadModules (state.js, …) read MODULE_NAME / VERSION as globals, so expose
 // them on window. (MODULE_NAME is also the settings/chatMetadata key.)
 var MODULE_NAME = window.MODULE_NAME = 'gm-lore-parser';
-var VERSION     = window.VERSION     = '0.0.16';
+var VERSION     = window.VERSION     = '0.0.17';
 
 // Resolve our own install folder from this module's own URL so module loading
 // works regardless of the third-party folder name (a GitHub clone is typically
@@ -59,6 +59,7 @@ var GLP_MODULE_LOAD_ORDER = [
     'commands',   // # command interceptor
     'panel',      // status panel rendering
     'context',    // context injection
+    'tools',      // optional native function-calling surface (chat-completion backends)
 ];
 
 async function glpLoadModules() {
@@ -661,6 +662,16 @@ async function renderSettingsPanel() {
         <label for="glp-ctx-depth">Context injection depth</label>
         <input type="number" id="glp-ctx-depth" class="text_pole" min="0" max="20" value="${settings.contextDepth}">
       </div>
+      <div class="glp-section-label">Memory &amp; tools</div>
+      <label class="glp-row"><input type="checkbox" id="glp-enrich-mem" ${settings.enrichMemories ? 'checked' : ''}><span>Enrich memory content (summarize the scene into memory blocks)</span></label>
+      <div class="glp-field-setting">
+        <label for="glp-enrich-window">Memory enrichment window (messages)</label>
+        <input type="number" id="glp-enrich-window" class="text_pole" min="2" max="50" value="${settings.enrichMemoryWindow ?? 10}">
+      </div>
+      <label class="glp-row"><input type="checkbox" id="glp-use-tools" ${settings.useFunctionTools ? 'checked' : ''}><span>Function tools for state changes (chat-completion backends)</span></label>
+      <div class="glp-field-setting">
+        <small><b>Semantic recall:</b> to retrieve memories by meaning (not just keywords), enable SillyTavern's built-in <b>Vector Storage → Vectorize All / World Info</b> against your Campaign Lorebook (the local <i>transformers</i> source works offline). Enrich memory content above for best results.</small>
+      </div>
       <div class="glp-section-label">Advanced</div>
       <div class="glp-two-col">
         <div class="glp-field-setting"><label>Scan depth</label><input  type="number" id="glp-scan-depth"  class="text_pole" min="1" max="20"  value="${settings.defaultScanDepth}"></div>
@@ -668,7 +679,8 @@ async function renderSettingsPanel() {
         <div class="glp-field-setting"><label>Rule order</label><input  type="number" id="glp-rule-order"  class="text_pole" min="1" max="999" value="${settings.ruleOrder}"></div>
       </div>
       <div class="glp-info">
-        <b>v0.0.16 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
+        <b>v0.0.17 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
+        <b>v0.0.17:</b> opt-in <b>memory enrichment</b> (summarize the recent scene into [Memory] bodies via a quiet side-prompt; raw text is the fallback); a <b>Semantic recall</b> note for pairing with built-in Vector Storage; and opt-in <b>function tools</b> for state changes on chat-completion backends (inert on text-completion — the prose-block path is unchanged).<br>
         <b>v0.0.16:</b> per-subject memory lorebooks are now <b>campaign-scoped</b> (<code>&lt;campaign&gt;-npc-&lt;slug&gt;</code> / <code>&lt;campaign&gt;-location-&lt;slug&gt;</code>) so two campaigns sharing an NPC name no longer cross-contaminate; <b>core memories are keyword-triggered</b> (not always-on) — an off-screen subject's memories stay out of context until it's named or present.<br>
         <b>The Architect</b> designs systems and emits a produced GM card; small models build it incrementally via <b>chunked card assembly</b> (<code>[CARD_BEGIN]</code> → <code>[CARD_FIELD]</code> → <code>[CARD_BOOK_ENTRY]</code> → <code>[CARD_FINALIZE]</code>), assembled + downloaded by the extension (one-shot <code>[CARD_OUTPUT]</code> still supported).<br>
         <b>Capability progression</b> is configurable per category via named profiles: none · counter · use_tracked · points_tiers · xp_levels · milestone (Veridia PP/tier = the built-in <i>veridia_pp</i>).<br>
@@ -710,6 +722,9 @@ async function renderSettingsPanel() {
     $('#glp-inject-res').on('change', function()    { getSettings().injectResolution = this.checked; injectCharacterContext(); save(); });
     $('#glp-tiered-ctx').on('change', async function() { getSettings().tieredContext = this.checked; injectCharacterContext(); await rebuildPlayerLoreEntries(getSettings()); save(); });
     $('#glp-ctx-depth').on('change', function()  { getSettings().contextDepth     = parseInt(this.value) || 1; injectCharacterContext(); save(); });
+    $('#glp-enrich-mem').on('change', function()    { getSettings().enrichMemories    = this.checked; save(); });
+    $('#glp-enrich-window').on('change', function() { getSettings().enrichMemoryWindow = parseInt(this.value) || 10; save(); });
+    $('#glp-use-tools').on('change', function()     { getSettings().useFunctionTools  = this.checked; save(); if (typeof syncGlpTools === 'function') syncGlpTools(); });
     $('#glp-scan-depth').on('change', function() { getSettings().defaultScanDepth = parseInt(this.value) || 4; save(); });
     $('#glp-lore-order').on('change', function() { getSettings().loreOrder        = parseInt(this.value) || 100; save(); });
     $('#glp-rule-order').on('change', function() { getSettings().ruleOrder        = parseInt(this.value) || 50;  save(); });
@@ -832,6 +847,7 @@ jQuery(async () => {
         mountGlpDrawer();
         refreshStatusPanel();
         injectCharacterContext();
+        if (typeof syncGlpTools === 'function') syncGlpTools();
     });
 
     console.log(`[${MODULE_NAME}] v${VERSION} loaded. Modules: ${GLP_MODULE_LOAD_ORDER.join(', ')}`);

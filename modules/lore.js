@@ -118,6 +118,12 @@ async function writeSubjectMemory(subjectName, prefix, memType, title, content, 
     const lb     = subjectBookName(prefix, subjectName, settings);
     await loadOrCreateLorebook(lb);
     await linkToChat(lb);
+    // Optional enrichment: compose a fuller memory from the recent scene instead of
+    // the model's (often terse) raw block text. Falls back to the raw text on any
+    // failure, and is a no-op unless settings.enrichMemories is on.
+    const enriched   = await enrichMemoryContent(subjectName, memType, content, settings);
+    const wasEnriched = enriched !== content;
+    content = enriched || content;
     const entry = {
         comment:    `[Memory] ${subjectName} — ${title || content.slice(0, 40)}`,
         key:        keywords, keysecondary: [],
@@ -127,9 +133,46 @@ async function writeSubjectMemory(subjectName, prefix, memType, title, content, 
         disable:    false, addMemo: true,
         memo:       `${isCore ? 'Core' : 'Episodic'} memory — gm-lore-parser v${VERSION}`,
         position:   0, role: null,
-        extensions: { gm_lore_parser: true, type: `${prefix.toUpperCase()}_MEMORY`, subject: subjectName, memory_type: memType },
+        extensions: { gm_lore_parser: true, type: `${prefix.toUpperCase()}_MEMORY`, subject: subjectName, memory_type: memType, enriched: wasEnriched },
     };
     return upsertEntry(lb, entry);
+}
+
+/** Compose a richer memory body by summarizing the recent transcript involving the
+ *  subject (MemoryBooks-style), via a quiet side-generation on the active connection
+ *  (works on text- and chat-completion backends). Returns the model's raw block text
+ *  unchanged when disabled, unavailable, or on any failure — never throws. */
+async function enrichMemoryContent(subjectName, memType, rawContent, settings) {
+    if (!settings?.enrichMemories) return rawContent;
+    if (window.__glpEnriching) return rawContent;           // avoid overlap / re-entrancy
+    const ctx = SillyTavern.getContext();
+    if (typeof ctx.generateQuietPrompt !== 'function') return rawContent;
+    const chat = ctx.chat || [];
+    if (chat.length < 2) return rawContent;
+    const n     = Math.max(2, parseInt(settings.enrichMemoryWindow) || 10);
+    const slice = chat.slice(-n)
+        .map(m => `${m.is_user ? 'User' : (m.name || 'GM')}: ${(m.mes || '').trim()}`)
+        .join('\n');
+    if (!slice.trim()) return rawContent;
+    const kind  = memType === 'core' ? 'core (a defining, permanent fact)' : 'episodic (a specific event that happened)';
+    const quietPrompt = [
+        `You maintain durable campaign memory. Write a ${kind} memory about "${subjectName}" in 2-4 sentences of plain prose.`,
+        `Use ONLY information present in the transcript below — do not invent details. Output the memory text only: no headers, labels, quotes, or block tags.`,
+        rawContent ? `The GM's note to expand faithfully: "${rawContent}"` : '',
+        `--- TRANSCRIPT ---`,
+        slice,
+    ].filter(Boolean).join('\n');
+    try {
+        window.__glpEnriching = true;
+        const out = await ctx.generateQuietPrompt({ quietPrompt, responseLength: 300 });
+        const text = (out || '').trim();
+        return text || rawContent;
+    } catch (e) {
+        console.warn(`[${MODULE_NAME}] memory enrichment failed; using raw content:`, e);
+        return rawContent;
+    } finally {
+        window.__glpEnriching = false;
+    }
 }
 
 /** NPC memory — thin wrapper over the generic subject-memory writer. */
