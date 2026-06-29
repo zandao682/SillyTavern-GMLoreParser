@@ -146,7 +146,11 @@ async function enrichMemoryContent(subjectName, memType, rawContent, settings) {
     if (!settings?.enrichMemories) return rawContent;
     if (window.__glpEnriching) return rawContent;           // avoid overlap / re-entrancy
     const ctx = SillyTavern.getContext();
-    if (typeof ctx.generateQuietPrompt !== 'function') return rawContent;
+    // Use generateRaw (NOT generateQuietPrompt): the latter runs through the active
+    // character card's persona, so a block-emitting/strongly-styled GM card returns a
+    // formatted reply (even a re-emitted block) instead of a clean summary. generateRaw
+    // is personaless — a neutral summarizer prompt.
+    if (typeof ctx.generateRaw !== 'function') return rawContent;
     const chat = ctx.chat || [];
     if (chat.length < 2) return rawContent;
     const n     = Math.max(2, parseInt(settings.enrichMemoryWindow) || 10);
@@ -154,18 +158,22 @@ async function enrichMemoryContent(subjectName, memType, rawContent, settings) {
         .map(m => `${m.is_user ? 'User' : (m.name || 'GM')}: ${(m.mes || '').trim()}`)
         .join('\n');
     if (!slice.trim()) return rawContent;
-    const kind  = memType === 'core' ? 'core (a defining, permanent fact)' : 'episodic (a specific event that happened)';
-    const quietPrompt = [
-        `You maintain durable campaign memory. Write a ${kind} memory about "${subjectName}" in 2-4 sentences of plain prose.`,
-        `Use ONLY information present in the transcript below — do not invent details. Output the memory text only: no headers, labels, quotes, or block tags.`,
-        rawContent ? `The GM's note to expand faithfully: "${rawContent}"` : '',
+    const kind = memType === 'core' ? 'core (a defining, permanent fact)' : 'episodic (a specific event that happened)';
+    const systemPrompt = 'You are a campaign-memory summarizer. Output ONLY the memory text as plain prose — no headers, labels, quotes, JSON, or block tags. Do not roleplay or add commentary.';
+    const prompt = [
+        `Write a ${kind} memory about "${subjectName}" in 2-4 sentences.`,
+        `Use ONLY information present in the transcript below; do not invent details.`,
+        rawContent ? `Expand this GM note faithfully: "${rawContent}"` : '',
         `--- TRANSCRIPT ---`,
         slice,
     ].filter(Boolean).join('\n');
     try {
         window.__glpEnriching = true;
-        const out = await ctx.generateQuietPrompt({ quietPrompt, responseLength: 300 });
-        const text = (out || '').trim();
+        const out = await ctx.generateRaw({ prompt, systemPrompt, responseLength: 300 });
+        let text = (out || '').trim();
+        // Defensive: if the model still slipped a block tag in, keep only the prose before it.
+        const bi = text.search(/\[[A-Z][A-Z0-9_]*_(?:BEGIN|END)\]/);
+        if (bi >= 0) text = text.slice(0, bi).trim();
         return text || rawContent;
     } catch (e) {
         console.warn(`[${MODULE_NAME}] memory enrichment failed; using raw content:`, e);

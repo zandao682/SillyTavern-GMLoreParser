@@ -261,7 +261,7 @@ Delete `harness-campaign`, `harness-campaign-plot`, and any `harness-campaign-np
 These are **settings-driven**, not new blocks. Enable them in the gm-lore-parser settings panel.
 
 ### Memory enrichment (Stage 1) — `enrichMemories` / `enrichMemoryWindow`
-Composes a richer `[Memory]` body by summarizing the recent transcript (a quiet side-generation on the active connection — works on text- and chat-completion backends). Raw block text is the guaranteed fallback. Implemented in `enrichMemoryContent()` + `writeSubjectMemory` (`modules/lore.js`).
+Composes a richer `[Memory]` body by summarizing the recent transcript via a **personaless** side-generation (`generateRaw`, NOT `generateQuietPrompt` — the latter inherits the active character card's persona, so a block-emitting/styled GM card returns a formatted reply instead of a clean summary). Works on text- and chat-completion backends. Raw block text is the guaranteed fallback, and any stray block tag in the output is stripped. Implemented in `enrichMemoryContent()` + `writeSubjectMemory` (`modules/lore.js`).
 
 | ID | Precondition | Action | Expected |
 |----|----|----|----|
@@ -269,6 +269,7 @@ Composes a richer `[Memory]` body by summarizing the recent transcript (a quiet 
 | ENRICH-02 | **Enrich memory content OFF** (default) | `emit: entity_memory` | Behaves exactly as ≤0.0.16: `content` is the model's raw block text; `extensions.enriched === false`. |
 | ENRICH-03 | Enrich ON but force a generation failure (e.g. disconnect the backend) | `emit: entity_memory` | Falls back to the raw block text (never empty, never throws); console warns "memory enrichment failed; using raw content". |
 | ENRICH-04 | Enrich ON | `emit: location_memory` | Same enrichment path applies to location memories (shared `writeSubjectMemory` choke point). |
+| ENRICH-05 | Enrich ON; the **active card is the block-emitting harness** | `emit: entity_memory` (fresh entry) | The written `content` is clean prose (e.g. "Garrick Stone let the wounded bandit go…"), **not** a re-emitted `[ENTITY_MEMORY_BEGIN]…[END]` block or a "Confirmation received…" line. Regression guard for the `generateRaw` (personaless) fix. **Verified live 0.0.17.** |
 
 ### Semantic recall (Stage 2) — built-in Vector Storage (config, not GLP code)
 gm-lore-parser writes standard World Info entries; SillyTavern's Vectors extension ingests them when its World-Info vectorization is enabled. No GLP retrieval code — Vectors owns injection. Best paired with ENRICH (richer bodies embed better).
