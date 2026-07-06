@@ -132,8 +132,11 @@ async function processPlotEntry(raw, settings) {
         notes   ? `Notes: ${notes}`     : '',
     ].filter(Boolean).join('\n');
 
-    // loadOrCreateLorebook so the plot lorebook is auto-created
+    // loadOrCreateLorebook so the plot lorebook is auto-created; link it to the chat
+    // immediately (like the per-subject books) so its entries are WI-active this turn,
+    // not only after the next chat load via linkCampaignBooks.
     const lb = await loadOrCreateLorebook(plotBook);
+    await linkToChat(plotBook);
     await upsertEntry(lb.name || plotBook, {
         ...entryBase(`[Plot] ${fields.title}`, keywords, content, settings.loreOrder, settings, { type: 'PLOT', slug: slugify(fields.title) }),
     });

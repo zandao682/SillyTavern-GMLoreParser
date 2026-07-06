@@ -33,6 +33,9 @@ async function upsertEntry(lorebookName, entry) {
             order:    entry.order,
             memo:     entry.memo,
             constant: entry.constant ?? ex.constant,
+            // merge extensions so audit/metadata flags (e.g. `enriched`) reflect the
+            // latest write instead of going stale on an update of an existing entry
+            extensions: { ...ex.extensions, ...entry.extensions },
         });
     } else {
         const uid = Object.keys(data.entries).length > 0
