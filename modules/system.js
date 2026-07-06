@@ -213,6 +213,23 @@ function _groupSections(raw) {
         if (!line.trim()) continue;
         const indented = /^\s/.test(line);
         if (!indented) {
+            // Tolerate models that restate the section name as a pipe-prefixed row
+            // instead of a "section:" header + indented rows, e.g.
+            //   attributes|Brawn|BRN|desc          (one attribute per line)
+            //   derived|health = (brawn*4) -> health, health_max
+            // Route "<section>|<rest>" (a bare keyword before the first '|', with no
+            // ':' before that '|') into that section's body lines, creating/reusing it.
+            const pipe  = line.indexOf('|');
+            const preCol = line.indexOf(':');
+            if (pipe !== -1 && (preCol === -1 || pipe < preCol)) {
+                const secName = line.slice(0, pipe).trim().toLowerCase();
+                if (secName && !/\s/.test(secName)) {
+                    if (!sections[secName]) sections[secName] = { inline: '', lines: [] };
+                    sections[secName].lines.push(line.slice(pipe + 1).trim());
+                    cur = sections[secName];
+                    continue;
+                }
+            }
             const colon = line.indexOf(':');
             const key   = (colon === -1 ? line : line.slice(0, colon)).trim().toLowerCase();
             const inline = colon === -1 ? '' : line.slice(colon + 1).trim();
@@ -363,12 +380,25 @@ function parseSystemDef(raw) {
         parsed.classes = { enabled: _bool(kv.enabled, options.length > 0), options };
     }
 
-    // attributes: rows `key | label | abbr | description`
+    // attributes: rows `key | label | abbr | description` (canonical) — also tolerate
+    // the keyless `label | abbr | description` form some models emit (the machine key
+    // is then derived from the label). Disambiguated by which field is the ABBR (a
+    // short all-caps token): index 2 → canonical, index 1 → keyless.
     if (sec.attributes) {
         const attrs = [];
+        const isAbbr = t => /^[A-Z][A-Z0-9]{1,4}$/.test((t || '').trim());
         for (const l of sec.attributes.lines) {
-            const [key, label, abbr, description] = l.split('|').map(s => s.trim());
-            if (key) attrs.push({ key: key.toLowerCase(), label: label || key, abbr: abbr || '', description: description || '' });
+            const p = l.split('|').map(s => s.trim());
+            let key, label, abbr, description;
+            if (isAbbr(p[2])) {            // key | label | abbr | desc
+                [key, label, abbr, description] = p;
+            } else if (isAbbr(p[1])) {     // label | abbr | desc [| extra] (no machine key)
+                label = p[0]; abbr = p[1]; description = p[2] || ''; key = '';
+            } else {                        // best effort: assume canonical order
+                [key, label, abbr, description] = p;
+            }
+            const k = (key || label || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+            if (k) attrs.push({ key: k, label: label || key || k, abbr: abbr || '', description: description || '' });
         }
         if (attrs.length) parsed.attributes = attrs;
     }

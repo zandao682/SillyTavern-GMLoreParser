@@ -163,6 +163,32 @@ function rerenderMessage(messageId, newText) {
  * Parse the indented schema: block from a PLAYER_SHEET or NPC block.
  * Returns { fields: {}, groups: [] }.
  */
+var SCHEMA_DESCRIPTOR_KEYS = new Set([
+    'field', 'groups', 'label', 'description', 'type', 'group', 'max_field',
+    'separator', 'color', 'mutability', 'gm_mutable', 'uses_threshold', 'uses_gain',
+    'regen_rate', 'regen_unit', 'regen_condition',
+]);
+
+/** Apply one `key: value` descriptor to the current field object. */
+function _applySchemaDescriptor(fd, key, val) {
+    switch (key) {
+        case 'label':           fd.label          = val; break;
+        case 'description':     fd.description     = val; break;
+        case 'type':            fd.type           = val; break;
+        case 'group':           fd.group          = val; break;
+        case 'max_field':       fd.max_field      = val; break;
+        case 'separator':       fd.separator      = val; break;
+        case 'color':           fd.color          = val; break;
+        case 'mutability':      fd.mutability     = val; break;
+        case 'gm_mutable':      fd.gm_mutable     = String(val).toLowerCase() === 'true'; break;
+        case 'uses_threshold':  fd.uses_threshold = parseFloat(val) || 0; break;
+        case 'uses_gain':       fd.uses_gain      = parseFloat(val) || 1; break;
+        case 'regen_rate':      (fd.regen ??= {}).rate      = parseFloat(val) || 0; break;
+        case 'regen_unit':      (fd.regen ??= {}).time_unit = val; break;
+        case 'regen_condition': (fd.regen ??= {}).condition = val; break;
+    }
+}
+
 function parseSchema(raw) {
     const schema = { fields: {}, groups: [] };
     let inSchema = false, cf = null;
@@ -171,30 +197,38 @@ function parseSchema(raw) {
         if (!t) continue;
         if (t.toLowerCase() === 'schema:') { inSchema = true; continue; }
         if (!inSchema) continue;
-        if (!line.match(/^\s/) && t) break;
+
+        // Format tolerance (mirrors the [SYSTEM_DEF] parser): a model may flatten the
+        // schema instead of using `field:` headers + indented descriptors. Accept a
+        // whole field on one pipe-delimited row: `field | key | Label | type | group | mutability`.
+        const pp = t.split('|').map(s => s.trim());
+        if (pp.length >= 2 && pp[0].toLowerCase() === 'field') {
+            const [, key, label, type, group, mutability] = pp;
+            const k = (key || '').trim();
+            if (k) {
+                cf = k;
+                schema.fields[k] = schema.fields[k] || {};
+                if (label)      _applySchemaDescriptor(schema.fields[k], 'label', label);
+                if (type)       _applySchemaDescriptor(schema.fields[k], 'type', type);
+                if (group)      _applySchemaDescriptor(schema.fields[k], 'group', group);
+                if (mutability) _applySchemaDescriptor(schema.fields[k], 'mutability', mutability);
+            }
+            continue;
+        }
+
         const c = t.indexOf(':'); if (c === -1) continue;
         const key = t.slice(0, c).trim().toLowerCase();
         const val = t.slice(c + 1).trim();
+
+        // Only a NON-indented line whose key is not a schema keyword ends the schema
+        // section (the block's top-level value lines resuming). A model that forgets
+        // to indent its `field:`/`label:`/… descriptors still parses.
+        if (!/^\s/.test(line) && !SCHEMA_DESCRIPTOR_KEYS.has(key)) break;
+
         if (key === 'groups') { schema.groups = val.split(',').map(s => s.trim()).filter(Boolean); continue; }
-        if (key === 'field')  { cf = val.trim(); if (cf) schema.fields[cf] = {}; continue; }
+        if (key === 'field')  { cf = val.trim(); if (cf) schema.fields[cf] = schema.fields[cf] || {}; continue; }
         if (!cf) continue;
-        const fd = schema.fields[cf];
-        switch (key) {
-            case 'label':           fd.label          = val; break;
-            case 'description':     fd.description     = val; break;
-            case 'type':            fd.type           = val; break;
-            case 'group':           fd.group          = val; break;
-            case 'max_field':       fd.max_field      = val; break;
-            case 'separator':       fd.separator      = val; break;
-            case 'color':           fd.color          = val; break;
-            case 'mutability':      fd.mutability     = val; break;
-            case 'gm_mutable':      fd.gm_mutable     = val.toLowerCase() === 'true'; break;
-            case 'uses_threshold':  fd.uses_threshold = parseFloat(val) || 0; break;
-            case 'uses_gain':       fd.uses_gain      = parseFloat(val) || 1; break;
-            case 'regen_rate':      (fd.regen ??= {}).rate      = parseFloat(val) || 0; break;
-            case 'regen_unit':      (fd.regen ??= {}).time_unit = val; break;
-            case 'regen_condition': (fd.regen ??= {}).condition = val; break;
-        }
+        _applySchemaDescriptor(schema.fields[cf], key, val);
     }
     return schema;
 }
