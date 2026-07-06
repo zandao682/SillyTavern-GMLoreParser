@@ -377,7 +377,8 @@ function renderCapabilityRow(c, cfg) {
     }
 
     const detail = c.effects || c.description || '';
-    return `<div class="glp-cap-row${isExclusive && c.active ? ' glp-cap-active' : ''}">
+    const loreAttr = ` glp-lore-clickable" data-lore="[Capability] ${String(c.name).replace(/"/g, '&quot;')}" title="Click for details`;
+    return `<div class="glp-cap-row${isExclusive && c.active ? ' glp-cap-active' : ''}${loreAttr}">
         <div class="glp-cap-head"><span class="glp-cap-name">${lead}${c.name}</span>${tag}</div>
         ${bar}
         ${detail ? `<div class="glp-cap-desc">${detail}</div>` : ''}

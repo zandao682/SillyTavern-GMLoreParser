@@ -2,7 +2,7 @@
 
 A SillyTavern extension that automates campaign record-keeping for AI-run tabletop RPGs. The GM (or the Architect that designs a game) emits structured blocks at the end of messages; the extension parses them and maintains the ruleset, character/NPC/companion state, lorebooks, capabilities, world time, and more — automatically.
 
-**Version:** 0.0.17 (beta)
+**Version:** 0.0.19 (beta)
 **Requires:** SillyTavern 1.12.0+
 
 It is system-agnostic: a single `[SYSTEM_DEF]` block defines the ruleset (which subsystems exist, attributes, derived-stat formulas, progression model, optional classes, reputation/skill/needs settings, conflict resolution, and more). Player, NPC, Companion, and Creature share one stat-block engine via the unified `[ENTITY]` family; Boons/Titles/Passives/Evolution/Skills are one `[CAPABILITY]` concept with configurable progression. Levels, XP, classes, capabilities, reputation, needs, and the other subsystems are all opt-in — a classless, levelless, skill-based system is fully supported.
@@ -582,6 +582,63 @@ Three optional, independent enhancements. All default **off** and all keep the l
 **Semantic recall (Vector Storage).** gm-lore-parser writes standard World Info entries; SillyTavern's **built-in Vector Storage** can retrieve them *by meaning* rather than only by keyword. Enable Vector Storage and turn on **World-Info vectorization** against your Campaign Lorebook (the local `transformers` embedding source works offline). This complements — does not replace — keyword triggering, and works best with memory enrichment on (richer bodies embed better). No gm-lore-parser code owns retrieval; Vectors handles injection.
 
 **Function tools (chat-completion backends).** With *Function tools* on, the extension registers `glp_record_memory`, `glp_entity_update`, `glp_currency_update`, `glp_quest_update`, and `glp_reputation_update` via SillyTavern's function-calling API. A capable model can call these structured tools instead of emitting prose `[BLOCK]` tags — more reliable than hoping a small model formats a literal block. Each tool routes into the same handler the block path uses. **This is inert on text-completion backends** (SillyTavern only surfaces tools where function-calling is supported), so the local-model prose-block path is unchanged. Use the tool *or* the equivalent block in a reply, never both (delta updates would otherwise double-apply).
+
+---
+
+## Autonomous memory capture (0.0.19)
+
+By default, `[Memory]` entries are only created when the model **emits** an
+`[ENTITY_MEMORY]`/`[LOCATION_MEMORY]` block (memory *enrichment*, above, only improves
+the body of a block the model already emitted). A model that never emits a memory block
+therefore builds no history. **Autonomous memory capture** (all triggers **opt-in, default
+off**) closes that gap by summarizing the transcript into a `[Memory]` on its own:
+
+- **On scene exit** — when a named subject leaves the scene (a `SCENE_UPDATE` `exit`/`set`
+  that drops them), write an episodic memory of *what happened while they were on-screen*
+  (the window is tracked from when they entered).
+- **On location change** — when the scene `location` changes, write an episodic memory for
+  the location just left.
+- **Periodic** — every *N* GM turns, write an episodic memory of the current scene (keyed
+  to the scene location if set, else the present subjects).
+- **On leaving the chat** — flush an episodic memory for still-present subjects (and the
+  location) from the chat you're switching away from.
+
+Each capture is a **personaless side-generation** (the same summarizer as enrichment, so
+the active card's persona can't turn it into a re-emitted block), writes to the subject's
+campaign-scoped per-subject book (`‹campaign›-npc-‹slug›` / `‹campaign›-location-‹slug›`),
+and is tagged `extensions.auto: true`. Guards keep it cheap and safe: a **minimum-messages**
+threshold skips a trigger with too little new material *before* spending a generation;
+identical auto memories are **de-duplicated**; and on any failure or empty summary it writes
+**nothing** (never a terse stub). Configure under **Autonomous memory capture** in settings.
+Because everything defaults off, the local text-completion path is unchanged unless you opt in.
+
+---
+
+## Per-chat player book & panel click-to-view (0.0.18)
+
+**Dedicated per-chat player lorebook.** The player's core sheet has always lived in
+per-chat `chatMetadata` (no bleed). The tiered `[Player:Skills]` / `[Player:Possessions]`
+/ `[Player:Domains]` projections, however, used to be written into the **shared campaign
+book** — so two chats that shared one campaign book but played different characters
+overwrote each other's player entries. Those projections now go to a **dedicated per-chat
+book**, `‹campaign›-player-‹chatid›`, created and chat-linked on first use and cached in
+per-chat state (so it survives chat renames). Legacy `[Player:*]` entries are auto-pruned
+from the campaign book on the next rebuild. This closes the last cross-chat/cross-campaign
+bleed vector for player state.
+
+**Panel click-to-view.** Every status-panel row that is backed by a lorebook entry is now
+clickable and opens that entry in a popup: quests (`[Quest]`), item-box and equipment items
+(`[Item]`), capabilities/skills (`[Capability]`), factions (`[Faction]`), world events
+(`[World Event]`), and companions (`[Companion]`) — alongside the existing carried-inventory
+and party/scene-member popups. A row whose entry doesn't exist yet shows a graceful
+"No lore entry recorded yet." message. All routes go through one delegated handler and one
+lookup helper (`glpShowLorePopup`).
+
+**Character-creation panel grouping.** When a `char_create` sequence finalizes, the sheet
+now groups fields correctly immediately — HP (and any bar/pool vital) under **vitals**,
+System-Definition attributes under **attributes** — without needing a page refresh, and
+reloading an older character corrects any fields a previous schema left in the `Other`
+catch-all.
 
 ---
 

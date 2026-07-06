@@ -132,6 +132,12 @@ function applyCharCreateFinalize(raw) {
     // Compute derived stats for known formula fields if they haven't been set
     _computeDerivedStats(state);
 
+    // Fold in every System-Definition attribute the character ended up with and
+    // correct any grouping the char_create schema block left unset (HP → vitals,
+    // attributes → attributes) so the finalized sheet renders correctly without a
+    // page refresh.
+    augmentSchemaWithDefAttributes(state.schema, state.values);
+
     // Mark session closed
     state.char_creation.active = false;
     console.log(`[${MODULE_NAME}] Character creation finalised: ${state.name || '(unnamed)'}.`);

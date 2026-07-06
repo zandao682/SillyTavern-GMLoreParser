@@ -141,6 +141,10 @@
 .glp-inv-item:hover { background: rgba(155,143,214,0.32); text-decoration: underline; }
 .glp-item-popup-body { white-space: pre-wrap; text-align: left; font-size: 0.95em; }
 
+/* Any lorebook-backed panel row opens its entry on click. */
+.glp-lore-clickable { cursor: pointer; }
+.glp-lore-clickable:hover { background: rgba(155,143,214,0.12); }
+
 .glp-status-empty {
     padding: 8px 12px;
     color: var(--SmartThemeEmColor, #888);

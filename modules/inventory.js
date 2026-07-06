@@ -136,7 +136,9 @@ function buildInventoryPanel(state) {
     if (eq.enabled && eq.slots.length) {
         const rows = eq.slots.map(s => {
             const item = state.equipment?.[s.key];
-            return `<div class="glp-equip-row"><span class="glp-equip-slot">${s.label || s.key}</span><span class="glp-equip-item">${item || '—'}</span></div>`;
+            const cls  = item ? 'glp-equip-row glp-lore-clickable' : 'glp-equip-row';
+            const attr = item ? ` data-lore="[Item] ${String(item).replace(/"/g, '&quot;')}" title="Click for item details"` : '';
+            return `<div class="${cls}"${attr}><span class="glp-equip-slot">${s.label || s.key}</span><span class="glp-equip-item">${item || '—'}</span></div>`;
         }).join('');
         sections.push(`<div class="glp-section"><div class="glp-section-title">Equipment</div>${rows}</div>`);
     }
@@ -147,31 +149,17 @@ function buildInventoryPanel(state) {
 
     if (inventoryCfg().item_box && state.item_box?.length) {
         const rows = state.item_box.map(e =>
-            `<div class="glp-itembox-row"><span>${e.item}</span>${e.condition ? `<span class="glp-itembox-cond">${e.condition}</span>` : ''}</div>`
+            `<div class="glp-itembox-row glp-lore-clickable" data-lore="[Item] ${String(e.item).replace(/"/g, '&quot;')}" title="Click for item details"><span>${e.item}</span>${e.condition ? `<span class="glp-itembox-cond">${e.condition}</span>` : ''}</div>`
         ).join('');
         sections.push(`<div class="glp-section"><div class="glp-section-title">Item Box</div>${rows}</div>`);
     }
     return sections.join('');
 }
 
-/** Open an inventory item's [Item] lorebook entry in a popup (header-free content). */
+/** Open an inventory item's [Item] lorebook entry in a popup (header-free content).
+ *  Delegates to the shared glpShowLorePopup so all panel sections use one code path. */
 async function glpShowItemPopup(itemName) {
-    const ctx = SillyTavern.getContext();
-    const lb  = getSettings().campaignLorebook;
-    let content = '';
-    if (lb) {
-        try {
-            const data  = await ctx.loadWorldInfo(lb);
-            const entry = data && Object.values(data.entries || {}).find(e => e.comment === `[Item] ${itemName}`);
-            content = entry?.content || '';
-        } catch (e) { /* ignore */ }
-    }
-    const esc  = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-    const body = content ? esc(content) : 'No lore entry recorded for this item yet.';
-    const html = `<div class="glp-item-popup"><h3>${esc(itemName)}</h3><pre class="glp-item-popup-body">${body}</pre></div>`;
-    if (typeof ctx.callGenericPopup === 'function' && ctx.POPUP_TYPE) ctx.callGenericPopup(html, ctx.POPUP_TYPE.TEXT);
-    else if (typeof ctx.callPopup === 'function') ctx.callPopup(html, 'text');
-    else toastr?.info?.(content || itemName);
+    return glpShowLorePopup(`[Item] ${itemName}`, [], itemName);
 }
 
 // ── Commands ───────────────────────────────────────────────────────────────────

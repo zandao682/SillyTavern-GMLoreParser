@@ -97,9 +97,84 @@ async function linkCampaignBooks(settings) {
     const plot = settings.plotLorebook || `${camp}-plot`;
     const link = [camp];
     if (all.includes(plot)) link.push(plot);
+    // Per-chat player book (holds the [Player:*] projections) if one exists for this chat.
+    const pb = playerBookName(settings, false);
+    if (pb && all.includes(pb)) link.push(pb);
     for (const n of all)
         if (n.startsWith(`${camp}-npc-`) || n.startsWith(`${camp}-location-`)) link.push(n);
     return linkToChatMany(link);
+}
+
+/** Stable per-chat player lorebook name. The tiered `[Player:*]` projections used to
+ *  live in the shared campaign book, so two chats that share one campaign book but play
+ *  different characters overwrote each other. This gives each chat its own player book
+ *  (`<campaign>-player-<chatid>`), cached in per-chat state so it survives chat renames.
+ *  Pure/synchronous — returns null if no campaign book or chat id is available and does
+ *  NOT create or link the book (see ensurePlayerBook). Set `persist=false` for read-only
+ *  lookups that shouldn't touch state (e.g. the click-to-view popup). */
+function playerBookName(settings, persist = true) {
+    const camp = settings?.campaignLorebook;
+    if (!camp) return null;
+    const st = (typeof getCharState === 'function') ? getCharState() : null;
+    if (st?.player_book) return st.player_book;
+    const ctx    = SillyTavern.getContext();
+    const chatId = (typeof ctx.getCurrentChatId === 'function') ? ctx.getCurrentChatId() : null;
+    if (!chatId) return null;
+    const name = `${camp}-player-${slugify(String(chatId))}`;
+    if (persist && st) { st.player_book = name; if (typeof saveCharState === 'function') saveCharState(); }
+    return name;
+}
+
+/** Ensure the per-chat player book exists and is chat-linked; returns its name (or null). */
+async function ensurePlayerBook(settings) {
+    const name = playerBookName(settings);
+    if (!name) return null;
+    await loadOrCreateLorebook(name);
+    await linkToChat(name);
+    return name;
+}
+
+/** Generic lorebook-entry popup for any panel row backed by a lorebook entry.
+ *  Searches the campaign book, the plot book, and the per-chat player book (in that
+ *  order) for an entry whose `comment` matches `comment` or any of `altComments`,
+ *  and renders its content in the shared `.glp-item-popup` markup. Falls back to a
+ *  graceful "no entry" message when the row has no backing entry yet. */
+async function glpShowLorePopup(comment, altComments = [], titleOverride = null) {
+    const ctx      = SillyTavern.getContext();
+    const settings = getSettings();
+    const wanted   = [comment, ...(Array.isArray(altComments) ? altComments : [altComments])].filter(Boolean);
+    const camp     = settings.campaignLorebook;
+
+    const books = [];
+    if (camp) {
+        books.push(camp);
+        books.push(settings.plotLorebook || `${camp}-plot`);
+    }
+    // Player book is where the per-chat [Player:*] entries live (read-only lookup).
+    const pb = (typeof playerBookName === 'function') ? playerBookName(settings, false) : null;
+    if (pb) books.push(pb);
+
+    let entry = null, foundComment = wanted[0] || '';
+    for (const bk of books) {
+        if (!bk) continue;
+        try {
+            const data = await ctx.loadWorldInfo(bk);
+            if (!data) continue;
+            for (const w of wanted) {
+                const e = Object.values(data.entries || {}).find(x => x.comment === w);
+                if (e) { entry = e; foundComment = w; break; }
+            }
+            if (entry) break;
+        } catch (e) { /* ignore missing book */ }
+    }
+
+    const esc   = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    const title = titleOverride || String(foundComment).replace(/^\[[^\]]+\]\s*/, '') || foundComment;
+    const body  = entry?.content ? esc(entry.content) : 'No lore entry recorded yet.';
+    const html  = `<div class="glp-item-popup"><h3>${esc(title)}</h3><pre class="glp-item-popup-body">${body}</pre></div>`;
+    if (typeof ctx.callGenericPopup === 'function' && ctx.POPUP_TYPE) ctx.callGenericPopup(html, ctx.POPUP_TYPE.TEXT);
+    else if (typeof ctx.callPopup === 'function') ctx.callPopup(html, 'text');
+    else toastr?.info?.(entry?.content || title);
 }
 
 /** Build a base lorebook entry object with all required fields. */

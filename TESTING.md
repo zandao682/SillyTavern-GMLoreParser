@@ -298,6 +298,36 @@ Registers `glp_record_memory`, `glp_entity_update`, `glp_currency_update`, `glp_
 
 ---
 
+## 8c. v0.0.18 fixes — char-creation grouping · per-chat player book · panel click-to-view
+
+### Character-creation panel grouping — `CC-PANEL-01`
+The finalized `char_create` sheet must group fields correctly with **no page refresh**. Fix lives in `augmentSchemaWithDefAttributes` (`modules/schema.js`, now also normalizes group + corrects existing mis-grouped fields) called at `applyCharCreateFinalize` (`modules/creation.js`).
+
+| ID | Precondition | Action | Expected |
+|----|----|----|----|
+| CC-PANEL-01 | Campaign set; SD-01 done; drawer open | `emit: char_create sequence` (BEGIN → 2 steps → FINALIZE) | After FINALIZE (no reload): **HP** renders under a **Vitals** group (not with attributes, not in `Other`); **all** attributes present in the def (fortitude, might, intellect, resolve) render under an **Attributes** group with their values; nothing lands on the HP line. |
+| CC-PANEL-02 | A character created by a pre-0.0.18 build whose HP/attributes sit in `Other` | Reload the page / switch to that chat | `onChatChanged`'s augment now **corrects** the existing fields: HP → Vitals, attributes → Attributes (previously only *missing* attributes were added; already-shown ones stayed in `Other`). |
+
+### Dedicated per-chat player lorebook — `PLAYER-BOOK-01`
+The tiered `[Player:*]` projections now write to `‹campaign›-player-‹chatid›` (`playerBookName`/`ensurePlayerBook` in `modules/lorebook.js`; `_upsertPlayerEntry` in `modules/context.js`), never the shared campaign book.
+
+| ID | Precondition | Action | Expected |
+|----|----|----|----|
+| PLAYER-BOOK-01 | Tiered context ON; two chats **A** (PC "Aria") and **B** (PC "Testra") that both set `harness-campaign` | In A: create Aria + skills; in B: create Testra + skills | Each chat has its own `harness-campaign-player-‹chatid›` book holding **its** `[Player:Skills]` / `[Player:Possessions]` / `[Player:Domains]`; the two never overwrite each other; the shared `harness-campaign` book holds **no** `[Player:*]` entries. |
+| PLAYER-BOOK-02 | A campaign book that still carries legacy `[Player:*]` entries from ≤0.0.17 | Trigger a player rebuild (e.g. capability change) | The legacy `[Player:*]` entries are **pruned** from the campaign book (one-time hygiene in `rebuildPlayerLoreEntries`); the current ones live only in the per-chat player book. |
+| PLAYER-BOOK-03 | PLAYER-BOOK-01 done | Start a **new chat** on the same campaign | The new chat gets a **fresh** player book (new chatid) — no player-state bleed from the prior chat; the per-chat book is chat-linked automatically. |
+
+### Panel click-to-view popups — `POPUP-01`
+Every lorebook-backed panel row is clickable via one delegated handler on `.glp-lore-clickable` → `glpShowLorePopup(data-lore)` (`index.js`; helper in `modules/lorebook.js`).
+
+| ID | Precondition | Action | Expected |
+|----|----|----|----|
+| POPUP-01 | Entries exist: a quest, an item-box item, an equipped item, a capability, a faction, a world event, a companion | Click each corresponding panel row | Each opens a popup showing that entry's `[Quest]` / `[Item]` / `[Capability]` / `[Faction]` / `[World Event]` / `[Companion]` content (searched across campaign, plot, and per-chat player books). |
+| POPUP-02 | A panel row whose backing entry does not exist yet | Click it | Popup shows the graceful "No lore entry recorded yet." message — no error. |
+| POPUP-03 | Carried-inventory pill and a party/scene member (existing popups) | Click each | Still work (item pill → `[Item]`; member → NPC/companion/creature entry via multi-candidate lookup) — no regression from the unified handler. |
+
+---
+
 ## 9. Coverage matrix
 
 **Blocks → test IDs**
@@ -351,6 +381,94 @@ Registers `glp_record_memory`, `glp_entity_update`, `glp_currency_update`, `glp_
 
 ---
 
+## 8d. v0.0.19 — autonomous memory capture (`AUTO-MEM-*`)
+
+Opt-in triggers that auto-create `[Memory]` entries from the transcript even when the model emits no memory block. Enable **Autonomous memory capture** (master `autoMemory`) plus the per-trigger flags in settings. Core: `autoWriteSubjectMemory` (`modules/lore.js`) reusing the personaless `glpSummarizeTranscript`; triggers in `applySceneUpdate`/`_fireSceneAutoMemory` (`modules/scene.js`) and `_glpAutoMemoryPeriodic`/`_glpCaptureSceneSnapshot`/`_glpFlushChatAwayMemory` (`index.js`). Writes to the subject's campaign-scoped book (`…-npc-<slug>` / `…-location-<slug>`), tagged `extensions.auto:true`.
+
+| ID | Precondition | Action | Expected |
+|----|----|----|----|
+| AUTO-MEM-SCENE-01 | `autoMemory` + `autoMemoryOnSceneExit` ON; an NPC has been present in the scene for ≥ `autoMemoryMinMessages` GM turns (tracked via the member's `since_msg`) | `emit: scene_update` with `exit: <name>` (or a `set:` that drops them) | A new entry appears in `…-npc-<slug>` with `extensions.auto:true`, `reason:"scene-exit"`, `memory_type:"episodic"`; content is clean prose summarizing their time on-screen (no block tags). **Verified live 0.0.19.** |
+| AUTO-MEM-LOC-01 | `autoMemory` + `autoMemoryOnLocationChange` ON; a `location` was set ≥ min messages ago | `emit: scene_update` with a new `location:` | Auto memory (`reason:"location-change"`) written to `…-location-<slug>` for the **previous** location. **Verified live 0.0.19.** |
+| AUTO-MEM-PERIODIC-01 | `autoMemory` + `autoMemoryPeriodic` ON; `autoMemoryEveryNMessages = N` | Send N GM turns of ordinary play | On the Nth turn an episodic memory of the current scene is written (to the location book if a scene location is set, else per present subject, capped at 3); the turn counter resets. |
+| AUTO-MEM-AWAY-01 | `autoMemory` + `autoMemoryOnChatAway` ON; a scene with present subjects | Switch to a different chat | The chat you left flushes an episodic memory for each still-present subject (and the location) from the captured snapshot — the summarizer runs off the snapshot transcript, since `ctx.chat` is already the new chat. |
+| AUTO-MEM-OFF-01 | `autoMemory` **OFF** (default) | any of the above | **No** auto memory written; `autoWriteSubjectMemory` returns false immediately; no side-generation fires. **Verified live 0.0.19.** |
+| AUTO-MEM-MIN-01 | `autoMemory` ON but the window has fewer than `autoMemoryMinMessages` new messages | trigger scene-exit right after entry | No write **and no generation** — the min-message guard short-circuits before spending a summarizer call. **Verified live 0.0.19.** |
+| AUTO-MEM-EMPTY-01 | `autoMemory` ON; force the summarizer to return empty (or pass an empty window) | trigger | Writes **nothing** (no terse stub); `autoWriteSubjectMemory` returns false. **Verified live 0.0.19.** |
+| AUTO-MEM-DEDUP-01 | An identical auto memory already exists for the subject | re-fire the same trigger with the same content | The duplicate is skipped (content-equality check on `extensions.auto` entries). |
+| AUTO-MEM-PERSONA-01 | Active card is the block-emitting harness; `autoMemory` ON | any trigger | The written `content` is clean prose, **not** a re-emitted `[…_BEGIN]` block (guaranteed by the personaless `generateRaw` path + block-tag strip — same guard as ENRICH-05). |
+
+> These reuse the enrichment summarizer, so ENRICH's caveats apply: quality depends on the backend model, and each capture is one extra short generation — hence all triggers default off and the min-message guard fires first. Auto and model-emitted memories can coexist for the same beat; `extensions.auto` + content de-dup mark/limit overlap (documented, like the tool-vs-block guidance).
+
+---
+
+## 10. Panel-state suite (`PANEL-*`)
+
+Verifies the **status panel renders the correct state** for every section — not block parsing (that's §4), but the *rendered surface*: grouping, values, show/hide against settings + feature gates, empty/populated states, click-to-view wiring, and live refresh. **Mostly deterministic** — drive state via `emit:` or the block handlers, then assert on the panel builder's output; no model needed except where a section's state only arises from a model block.
+
+**Tooling.** Inject `assets/panel-probe.js` (companion to `harness-helpers.js`) and call `window.__glp.panelProbe()`. It parses `buildStatusPanelHTML(getCharState(), getSettings())` into a detached DOM and returns a structured map:
+```
+{ mode: 'creation'|'empty'|'sheet',
+  header: { name, sub, activeTitle, worldTime },
+  groupLabels: [...], coreGroups: [{label, fields:[…]}],
+  sections: { scene, party, capabilities, domains, quests, reputation, events,
+              currency, rank, companions, inventory:{carried,equipment,itembox}, needs },
+  clickables: [ '[Type] Name', … ], liveMounted }
+```
+Each section reports `{present, empty, count, rows, clickables}` (inventory reports `carried/equipment/itembox`). `window.__glp.expectSection(name, 'present'|'hidden'|N)` is a one-line assert. Section row selectors are **scoped to each section's panel** (scene/party members reuse `.glp-cap-row`, so unscoped counting would inflate Capabilities — the probe scopes to `.glp-scene-panel`/`.glp-party-panel` vs. `.glp-cap-cat`).
+
+**Setup.** `G.setup()` then `emit: system_def default`, then the minimal blocks per case. A single fully-populated character (one `entity player`, a couple capabilities, a quest, a faction, a world event, an item + item-box entry, a needs system, currency, rank, a scene + party) lets one probe cover most `-01` cases at once; the `-02`/`-03` cases flip state/settings.
+
+### Mode & core sheet
+| ID | Precondition | Assert (`panelProbe()`) |
+|----|----|----|
+| PANEL-MODE-01 | `char_create` BEGIN sent, session active | `mode === 'creation'`; creation checklist rows present; no `.glp-group` sheet. |
+| PANEL-MODE-02 | fresh chat, no character | `mode === 'empty'`; placeholder text present. |
+| PANEL-MODE-03 | `entity player` applied | `mode === 'sheet'`; `header.name` set. |
+| PANEL-CORE-01 | player with HP (bar) + attributes | `groupLabels` includes `vitals` and `attributes`; HP field under `vitals`, attributes under `attributes`; no field on the wrong group. (Panel counterpart to CC-PANEL-01, for a plain entity.) |
+| PANEL-CORE-02 | schema has an `hp_max` (max_field) and a uses-counter | those keys do **not** appear as their own rows in `coreGroups`. |
+| PANEL-CORE-03 | schema declares `groups: vitals, attributes` | `groupLabels` order === declared order. |
+| PANEL-CORE-04 | a field with an unknown group | it renders in a trailing group (present in `groupLabels` after the declared ones), not dropped. |
+
+### Header
+| ID | Precondition | Assert |
+|----|----|----|
+| PANEL-HDR-01 | player with class + background | `header.sub` = "Class · Background". |
+| PANEL-HDR-02 | an active exclusive-category (title) capability owned by player | `header.activeTitle` set; without one → null. |
+| PANEL-HDR-03 | `world_time` applied | `header.worldTime` matches the display string. |
+
+### Collapsible sections (each ×3)
+For **each** of `scene, party, capabilities, domains, quests, reputation, events, currency, rank, companions, inventory, needs`:
+| ID pattern | State | Assert |
+|----|----|----|
+| `PANEL-<SEC>-01` | section populated | `sections.<sec>.present === true` and `count`/rows match the emitted data (inventory: carried/equipment/itembox counts). |
+| `PANEL-<SEC>-02` | section state empty | hidden (`present === false`) — except builders that emit an inline empty message (events/reputation) where `empty === true` + `emptyMsg` set. |
+| `PANEL-<SEC>-03` | state present but gate off (`show<Sec>Panel=false` **or** the feature disabled in the System Definition) | `present === false`. |
+
+Examples: `PANEL-QUESTS-01` (`emit: quest` → `sections.quests.count===1`, summary shows count); `PANEL-INV-01` (equipment + carried + item box populated → all three arrays non-empty); `PANEL-NEEDS-03` (`needs` feature off in def → section absent even with state).
+
+### Live refresh
+| ID | Action | Assert |
+|----|----|----|
+| PANEL-LIVE-01 | after `emit: currency_update` / `xp_award` / `entity_update` (HP delta) / `quest_update` | a fresh `panelProbe()` reflects the new value **without reload**; the mounted `#glp-status-panel` shows it too (`liveMounted` true after `refreshStatusPanel()`). |
+| PANEL-LIVE-02 | switch to a different chat (`onChatChanged`) | probe of the new chat shows **no** rows from the prior character (no stale sections). |
+
+### Click-to-view (v0.0.18)
+| ID | Assert |
+|----|----|
+| PANEL-CLICK-01..07 | one per lorebook-backed section (quests, item box, equipment, capabilities, factions, events, companions): each populated row's `data-lore` (in `sections.<sec>.clickables` / global `clickables`) equals its `[Type] Name` comment. |
+| PANEL-CLICK-EMPTY | `glpShowLorePopup('[Quest] __none__')` → popup body is the graceful "No lore entry recorded yet." |
+| PANEL-CLICK-REG | carried-item pill (`.glp-inv-item[data-item]`) and party/scene member (`.glp-member[data-member]`) still route to their popups (no regression from the unified `.glp-lore-clickable` handler). |
+
+### Gate sweep
+| ID | Action | Assert |
+|----|----|----|
+| PANEL-GATE-01 | set every `show*Panel=false` | only header + core sheet + always-on Scene/Party remain present. |
+| PANEL-GATE-02 | disable a feature in the def (`featureOn=false`) | its section absent even with `show*Panel=true` and state present. |
+
+**Results doc.** The `/glp-test-harness` skill's **panel-only mode** runs this matrix and writes `test-runs/panel-run-<version>-<date>.md` — a table of every `PANEL-*` id with pass/fail + observed-vs-expected (axes: **section present · rows/values correct · gate honored**), for cross-version comparison. Exit criteria: every section correct populated / hidden-when-empty / hidden-when-gated / live-refresh, and correct click-to-view for the seven lorebook-backed sections, with zero console errors during render/refresh.
+
+---
+
 ## Pitfalls (read before running)
 
 1. **Lorebook prerequisite is silent** — without a Campaign Lorebook, lore blocks and SYSTEM_DEF persistence no-op. Do P2/P3, then SD-01.
@@ -362,4 +480,4 @@ Registers `glp_record_memory`, `glp_entity_update`, `glp_currency_update`, `glp_
 7. **Derived stats only fill unset/zero targets** — the harness leaves hp/mp/vigor blank deliberately.
 8. **NPC values are reconstructed from lorebook text** — verify NPC tests via the three `[NPC…]` entries' content, not chatMetadata.
 
-The block catalogue inside `test-harness-card.json` duplicates the live protocol; if the extension protocol changes, regenerate the catalogue (canonical templates: `system-designer-card.json`). The harness stamps `protocol_version 0.0.17`.
+The block catalogue inside `test-harness-card.json` duplicates the live protocol; if the extension protocol changes, regenerate the catalogue (canonical templates: `system-designer-card.json`). The harness stamps `protocol_version 0.0.19`.

@@ -112,6 +112,19 @@ var DEFAULT_SETTINGS = Object.freeze({
     enrichMemories: false,     // summarize the recent scene into [Memory] bodies (quiet-prompt)
     enrichMemoryWindow: 10,    // trailing chat messages fed to the memory summarizer
     useFunctionTools: false,   // register block tools on chat-completion backends (inert on text-completion)
+    // ── 0.0.19 additions — autonomous memory capture ───────────────────────────
+    // Auto-create [Memory] entries from the transcript even when the model emits no
+    // [ENTITY_MEMORY]/[LOCATION_MEMORY] block. Master switch + per-trigger flags; all
+    // default OFF so the text-completion path is unchanged unless opted in. Each auto
+    // memory is a personaless side-generation (reuses the enrichment summarizer) and
+    // writes NOTHING on failure (no terse stub). Marked extensions.auto:true.
+    autoMemory: false,              // master enable (all triggers below are no-ops when off)
+    autoMemoryOnSceneExit: true,    // when a named subject leaves the scene → episodic memory of their time on-screen
+    autoMemoryOnLocationChange: true, // when the scene location changes → episodic memory for the previous location
+    autoMemoryPeriodic: false,      // every N GM turns → episodic memory of the current scene
+    autoMemoryEveryNMessages: 20,   // cadence for the periodic trigger
+    autoMemoryOnChatAway: true,     // on chat change → flush a memory for still-present subjects
+    autoMemoryMinMessages: 4,       // skip a trigger unless ≥ this many messages accrued in the window
 });
 
 var DEFAULT_CHAR_STATE = Object.freeze({

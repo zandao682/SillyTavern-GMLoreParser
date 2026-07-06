@@ -81,7 +81,10 @@ function injectCharacterContext() {
 // always-on core above (no duplicate [Player:*] entry is created for them).
 
 async function _upsertPlayerEntry(settings, comment, keys, content, type) {
-    const lb = settings.campaignLorebook;
+    // Player projections live in a dedicated per-chat book so two chats sharing one
+    // campaign book (different PCs) never overwrite each other's [Player:*] entries.
+    const lb = await ensurePlayerBook(settings);
+    if (!lb) return;
     if (content && content.trim()) {
         await upsertEntry(lb, entryBase(comment, normalizeKeys(keys), content, settings.loreOrder, settings, { type }));
     } else {
@@ -91,9 +94,15 @@ async function _upsertPlayerEntry(settings, comment, keys, content, type) {
 
 async function rebuildPlayerLoreEntries(settings) {
     if (!settings.campaignLorebook) return;
+    // One-time hygiene: older versions wrote [Player:*] into the shared campaign book.
+    // Always prune those so the campaign book never carries a leaked player projection.
+    for (const t of ['PLAYER_SKILLS', 'PLAYER_POSSESSIONS', 'PLAYER_DOMAINS'])
+        await removeEntriesByComment(settings.campaignLorebook, new Set(), t);
+
     if (settings.tieredContext === false) {                  // legacy mode keeps everything in always-on context — drop any [Player:*] entries
-        for (const t of ['PLAYER_SKILLS', 'PLAYER_POSSESSIONS', 'PLAYER_DOMAINS'])
-            await removeEntriesByComment(settings.campaignLorebook, new Set(), t);
+        const pb = playerBookName(settings, false);
+        if (pb) for (const t of ['PLAYER_SKILLS', 'PLAYER_POSSESSIONS', 'PLAYER_DOMAINS'])
+            await removeEntriesByComment(pb, new Set(), t);
         return;
     }
     const state = getCharState();

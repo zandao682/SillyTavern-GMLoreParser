@@ -1,5 +1,5 @@
 /**
- * GM Lore Parser — SillyTavern Extension  v0.0.17 (beta)
+ * GM Lore Parser — SillyTavern Extension  v0.0.19 (beta)
  *
  * Entry point only. All logic lives in modules/. Load order matters:
  * state → utils → lorebook → system → schema → entity → progression →
@@ -19,7 +19,7 @@
 // glpLoadModules (state.js, …) read MODULE_NAME / VERSION as globals, so expose
 // them on window. (MODULE_NAME is also the settings/chatMetadata key.)
 var MODULE_NAME = window.MODULE_NAME = 'gm-lore-parser';
-var VERSION     = window.VERSION     = '0.0.17';
+var VERSION     = window.VERSION     = '0.0.19';
 
 // Resolve our own install folder from this module's own URL so module loading
 // works regardless of the third-party folder name (a GitHub clone is typically
@@ -552,6 +552,70 @@ async function onMessageReceived(messageId) {
 
     // ── Narrative header: render + prepend after the message text is finalized ──
     applyNarrativeHeader(messageId);
+
+    // ── Autonomous memory: periodic scene capture + snapshot for chat-away flush ──
+    await _glpAutoMemoryPeriodic(settings);
+    _glpCaptureSceneSnapshot(settings);
+}
+
+/** Periodic auto-memory: every N GM turns, summarize the current scene into an episodic
+ *  memory (keyed to the scene location if set, else the present subjects). Opt-in;
+ *  fires in the background so it never delays the message pipeline. */
+async function _glpAutoMemoryPeriodic(settings) {
+    if (!settings.autoMemory || !settings.autoMemoryPeriodic || typeof autoWriteSubjectMemory !== 'function') return;
+    const st = getCharState();
+    const N  = Math.max(2, parseInt(settings.autoMemoryEveryNMessages) || 20);
+    st.auto_mem_turns = (st.auto_mem_turns || 0) + 1;
+    if (st.auto_mem_turns < N) return;
+    const chatLen = (SillyTavern.getContext().chat || []).length;
+    const since   = st.auto_mem_last_index ?? Math.max(0, chatLen - N);
+    st.auto_mem_turns = 0;
+    st.auto_mem_last_index = chatLen;
+    (async () => {
+        try {
+            if (st.scene_location) await autoWriteSubjectMemory(st.scene_location, 'location', since, settings, 'periodic');
+            else for (const m of Object.values(st.scene || {}).slice(0, 3))
+                await autoWriteSubjectMemory(m.name, 'npc', since, settings, 'periodic');
+        } catch (e) { /* background */ }
+    })();
+}
+
+/** Capture a lightweight snapshot of the current scene + recent transcript so the
+ *  chat-away trigger can summarize the chat we just left (by the time CHAT_CHANGED
+ *  fires, ctx.chat is already the new chat). Only when the chat-away trigger is on. */
+function _glpCaptureSceneSnapshot(settings) {
+    if (!settings.autoMemory || !settings.autoMemoryOnChatAway) { window.__glpSceneSnapshot = null; return; }
+    const ctx  = SillyTavern.getContext();
+    const st   = getCharState();
+    const full = ctx.chat || [];
+    const base = Math.max(0, full.length - 120);   // cap the copy to the last 120 messages
+    window.__glpSceneSnapshot = {
+        chatId:     ctx.getCurrentChatId?.(),
+        scene:      Object.values(st.scene || {}).map(m => ({ name: m.name, since_msg: m.since_msg })),
+        location:   st.scene_location,
+        locSince:   st.scene_location_since,
+        baseIndex:  base,
+        transcript: full.slice(base).map(m => ({ is_user: !!m.is_user, name: m.name, mes: (m.mes || '') })),
+    };
+}
+
+/** Chat-away flush: on leaving a chat, write an episodic memory for each still-present
+ *  subject (and the location) from the snapshot of the chat we left. Background/serialized. */
+async function _glpFlushChatAwayMemory() {
+    const snap = window.__glpSceneSnapshot;
+    window.__glpSceneSnapshot = null;
+    const settings = getSettings();
+    if (!snap || !settings.autoMemory || !settings.autoMemoryOnChatAway || typeof autoWriteSubjectMemory !== 'function') return;
+    if (snap.chatId && snap.chatId === SillyTavern.getContext().getCurrentChatId?.()) return; // not actually a switch
+    if (!(snap.scene || []).length && !snap.location) return;
+    const slice = (sinceIdx) => {
+        const rel = Math.max(0, (typeof sinceIdx === 'number' ? sinceIdx : snap.baseIndex) - snap.baseIndex);
+        return snap.transcript.slice(rel)
+            .map(m => `${m.is_user ? 'User' : (m.name || 'GM')}: ${(m.mes || '').trim()}`)
+            .filter(l => l.length > 5).join('\n');
+    };
+    for (const m of (snap.scene || [])) await autoWriteSubjectMemory(m.name, 'npc', null, settings, 'chat-away', slice(m.since_msg));
+    if (snap.location) await autoWriteSubjectMemory(snap.location, 'location', null, settings, 'chat-away', slice(snap.locSince));
 }
 
 async function onUserMessageRendered(messageId) {
@@ -588,6 +652,7 @@ async function handlePlayerSheetBlocks(message, messageId, settings) {
 
 function onGenerationStarted() { injectCharacterContext(); }
 async function onChatChanged() {
+    _glpFlushChatAwayMemory().catch(() => {});   // flush a memory for the chat we just left (opt-in, background)
     await loadSystemDefFromLorebook(getSettings());
     await linkCampaignBooks(getSettings());   // ensure all generated campaign books are WI-active for this chat
     const st = getCharState();
@@ -670,6 +735,17 @@ async function renderSettingsPanel() {
         <input type="number" id="glp-enrich-window" class="text_pole" min="2" max="50" value="${settings.enrichMemoryWindow ?? 10}">
       </div>
       <label class="glp-row"><input type="checkbox" id="glp-use-tools" ${settings.useFunctionTools ? 'checked' : ''}><span>Function tools for state changes (chat-completion backends)</span></label>
+      <div class="glp-section-label">Autonomous memory capture</div>
+      <label class="glp-row"><input type="checkbox" id="glp-auto-mem" ${settings.autoMemory ? 'checked' : ''}><span>Auto-create memories from the transcript (even when no memory block is emitted)</span></label>
+      <div class="glp-field-setting"><small>Summarizes the recent scene into a <b>[Memory]</b> entry for the relevant subject/location via a personaless side-generation (same summarizer as enrichment). Writes nothing on failure. Each auto memory is tagged <code>auto</code>. All triggers below require this master switch.</small></div>
+      <label class="glp-row glp-auto-mem-sub"><input type="checkbox" id="glp-auto-mem-scene-exit" ${settings.autoMemoryOnSceneExit ? 'checked' : ''}><span>…when a subject leaves the scene (their time on-screen)</span></label>
+      <label class="glp-row glp-auto-mem-sub"><input type="checkbox" id="glp-auto-mem-loc-change" ${settings.autoMemoryOnLocationChange ? 'checked' : ''}><span>…when the scene location changes (the previous location)</span></label>
+      <label class="glp-row glp-auto-mem-sub"><input type="checkbox" id="glp-auto-mem-away" ${settings.autoMemoryOnChatAway ? 'checked' : ''}><span>…on leaving the chat (still-present subjects)</span></label>
+      <label class="glp-row glp-auto-mem-sub"><input type="checkbox" id="glp-auto-mem-periodic" ${settings.autoMemoryPeriodic ? 'checked' : ''}><span>…periodically, every N GM turns (the current scene)</span></label>
+      <div class="glp-two-col">
+        <div class="glp-field-setting"><label for="glp-auto-mem-every">Periodic cadence (GM turns)</label><input type="number" id="glp-auto-mem-every" class="text_pole" min="2" max="200" value="${settings.autoMemoryEveryNMessages ?? 20}"></div>
+        <div class="glp-field-setting"><label for="glp-auto-mem-min">Min messages to summarize</label><input type="number" id="glp-auto-mem-min" class="text_pole" min="1" max="50" value="${settings.autoMemoryMinMessages ?? 4}"></div>
+      </div>
       <div class="glp-field-setting">
         <small><b>Semantic recall:</b> to retrieve memories by meaning (not just keywords), enable SillyTavern's built-in <b>Vector Storage → Vectorize All / World Info</b> against your Campaign Lorebook (the local <i>transformers</i> source works offline). Enrich memory content above for best results.</small>
       </div>
@@ -680,7 +756,9 @@ async function renderSettingsPanel() {
         <div class="glp-field-setting"><label>Rule order</label><input  type="number" id="glp-rule-order"  class="text_pole" min="1" max="999" value="${settings.ruleOrder}"></div>
       </div>
       <div class="glp-info">
-        <b>v0.0.17 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
+        <b>v0.0.19 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
+        <b>v0.0.19:</b> opt-in <b>autonomous memory capture</b> — auto-create <b>[Memory]</b> entries from the transcript even when the model emits no memory block: when a subject <b>leaves the scene</b> (their time on-screen), when the scene <b>location changes</b> (the place just left), <b>periodically</b> every N GM turns, and on <b>leaving the chat</b> (still-present subjects). Each is a personaless side-generation (same summarizer as enrichment), writes <i>nothing</i> on failure (no stub), is de-duplicated, and is tagged <code>auto</code>. All triggers default OFF, so the local text-completion path is unchanged unless opted in.<br>
+        <b>v0.0.18:</b> character-creation panel now groups the finalized sheet correctly (HP in <i>vitals</i>, attributes in <i>attributes</i>) without needing a refresh, and reloads correct any previously mis-grouped fields; the tiered <b>[Player:*]</b> projections moved into a dedicated <b>per-chat player lorebook</b> (<code>&lt;campaign&gt;-player-&lt;chat&gt;</code>) so two chats sharing a campaign book can't overwrite each other's player state (legacy entries auto-pruned from the campaign book); and <b>every lorebook-backed panel row</b> (quests, item box, equipment, capabilities, factions, world events, companions) is now <b>click-to-view</b> — opening its lorebook entry in a popup.<br>
         <b>v0.0.17:</b> opt-in <b>memory enrichment</b> (summarize the recent scene into [Memory] bodies via a personaless side-prompt; raw text is the fallback); all generated campaign lorebooks (campaign, plot, per-subject) are now <b>auto-linked to the active chat</b> so their entries are pulled by keyword World Info <i>and</i> Vector Storage; a <b>Semantic recall</b> note for pairing with built-in Vector Storage; and opt-in <b>function tools</b> for state changes on chat-completion backends (inert on text-completion — the prose-block path is unchanged).<br>
         <b>v0.0.16:</b> per-subject memory lorebooks are now <b>campaign-scoped</b> (<code>&lt;campaign&gt;-npc-&lt;slug&gt;</code> / <code>&lt;campaign&gt;-location-&lt;slug&gt;</code>) so two campaigns sharing an NPC name no longer cross-contaminate; <b>core memories are keyword-triggered</b> (not always-on) — an off-screen subject's memories stay out of context until it's named or present.<br>
         <b>The Architect</b> designs systems and emits a produced GM card; small models build it incrementally via <b>chunked card assembly</b> (<code>[CARD_BEGIN]</code> → <code>[CARD_FIELD]</code> → <code>[CARD_BOOK_ENTRY]</code> → <code>[CARD_FINALIZE]</code>), assembled + downloaded by the extension (one-shot <code>[CARD_OUTPUT]</code> still supported).<br>
@@ -726,6 +804,13 @@ async function renderSettingsPanel() {
     $('#glp-enrich-mem').on('change', function()    { getSettings().enrichMemories    = this.checked; save(); });
     $('#glp-enrich-window').on('change', function() { getSettings().enrichMemoryWindow = parseInt(this.value) || 10; save(); });
     $('#glp-use-tools').on('change', function()     { getSettings().useFunctionTools  = this.checked; save(); if (typeof syncGlpTools === 'function') syncGlpTools(); });
+    $('#glp-auto-mem').on('change', function()            { getSettings().autoMemory                 = this.checked; save(); });
+    $('#glp-auto-mem-scene-exit').on('change', function() { getSettings().autoMemoryOnSceneExit      = this.checked; save(); });
+    $('#glp-auto-mem-loc-change').on('change', function() { getSettings().autoMemoryOnLocationChange = this.checked; save(); });
+    $('#glp-auto-mem-away').on('change', function()       { getSettings().autoMemoryOnChatAway       = this.checked; save(); });
+    $('#glp-auto-mem-periodic').on('change', function()   { getSettings().autoMemoryPeriodic         = this.checked; save(); });
+    $('#glp-auto-mem-every').on('change', function()      { getSettings().autoMemoryEveryNMessages   = parseInt(this.value) || 20; save(); });
+    $('#glp-auto-mem-min').on('change', function()        { getSettings().autoMemoryMinMessages      = parseInt(this.value) || 4;  save(); });
     $('#glp-scan-depth').on('change', function() { getSettings().defaultScanDepth = parseInt(this.value) || 4; save(); });
     $('#glp-lore-order').on('change', function() { getSettings().loreOrder        = parseInt(this.value) || 100; save(); });
     $('#glp-rule-order').on('change', function() { getSettings().ruleOrder        = parseInt(this.value) || 50;  save(); });
@@ -820,6 +905,11 @@ function mountGlpDrawer() {
     // Party/scene member → popup their NPC/companion/creature entry.
     $(document).off('click.glpMember').on('click.glpMember', '.glp-member', function () {
         if (typeof glpShowMemberPopup === 'function') glpShowMemberPopup($(this).attr('data-member'));
+    });
+    // Any lorebook-backed panel row → popup its entry (quests, item box, equipment,
+    // capabilities, factions, world events, companions). One unified handler.
+    $(document).off('click.glpLore').on('click.glpLore', '.glp-lore-clickable', function () {
+        if (typeof glpShowLorePopup === 'function') glpShowLorePopup($(this).attr('data-lore'));
     });
 }
 

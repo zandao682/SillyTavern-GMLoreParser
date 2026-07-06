@@ -576,7 +576,8 @@ function buildCompanionPanel(companions) {
     if (!activeComps.length) return '';
     const rows = activeComps.map(c => {
         const rankBadge = c.rank ? `<span class="glp-rank-badge">${c.rank}</span>` : '';
-        return `<div class="glp-companion-row">
+        const lore = ` glp-lore-clickable" data-lore="[Companion] ${String(c.name).replace(/"/g, '&quot;')}" title="Click for companion details`;
+        return `<div class="glp-companion-row${lore}">
             <span class="glp-companion-name">${c.name}</span>${rankBadge}
             <div class="glp-loyalty-bar-wrap"><div class="glp-loyalty-bar" style="width:${loyaltyPct(c.loyalty)}%"></div></div>
             <span class="glp-loyalty-val">${c.loyalty}</span>

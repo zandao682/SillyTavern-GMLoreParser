@@ -307,7 +307,10 @@ function buildRepPanelHTML(factions, reputation) {
             ? `<span class="glp-faction-attitude">${f.attitude_to_party}</span>` : '';
         const goals = f?.goals
             ? `<div class="glp-faction-goals">${f.goals}</div>` : '';
-        return `<div class="glp-rep-row">
+        const loreAttr = f
+            ? ` glp-lore-clickable" data-lore="[Faction] ${String(name).replace(/"/g, '&quot;')}" title="Click for faction details`
+            : '';
+        return `<div class="glp-rep-row${loreAttr}">
             <div class="glp-rep-header">
                 <span class="glp-rep-name">${name}</span>
                 ${attitude}

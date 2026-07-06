@@ -81,6 +81,11 @@ async function applyPartyUpdate(raw, settings) {
 
 async function applySceneUpdate(raw, settings) {
     const st = getCharState();
+    const chatLen = (SillyTavern.getContext().chat || []).length;
+    // Snapshot for autonomous-memory diffing: who/where we had, and since when.
+    const before          = Object.values(st.scene || {}).map(m => ({ slug: m.slug, name: m.name, since_msg: m.since_msg }));
+    const beforeLoc       = st.scene_location;
+    const beforeLocSince  = st.scene_location_since;
     let changed = false;
     for (const line of raw.split('\n')) {
         const c = line.indexOf(':'); if (c === -1) continue;
@@ -90,19 +95,42 @@ async function applySceneUpdate(raw, settings) {
         else if (verb === 'location') { st.scene_location = val; changed = true; }
         else if (verb === 'set') {
             st.scene = {};
-            for (const piece of val.split(',')) { const m = _parseMember(piece); if (m) { m.ref = _memberRef(m.name); st.scene[m.slug] = m; } }
+            for (const piece of val.split(',')) { const m = _parseMember(piece); if (m) { m.ref = _memberRef(m.name); m.since_msg = chatLen; st.scene[m.slug] = m; } }
             changed = true;
         } else if (verb === 'enter' || verb === 'add') {
-            const m = _parseMember(val); if (m) { m.ref = _memberRef(m.name); st.scene[m.slug] = m; changed = true; }
+            const m = _parseMember(val); if (m) { const prev = st.scene[m.slug]; m.ref = _memberRef(m.name); m.since_msg = prev?.since_msg ?? chatLen; st.scene[m.slug] = m; changed = true; }
         } else if (verb === 'exit' || verb === 'remove') {
             const slug = slugify(val); if (st.scene[slug]) { delete st.scene[slug]; changed = true; }
         }
     }
-    if (changed)
+    if (changed) {
         await _upsertConstant(settings.campaignLorebook, SCENE_ENTRY_COMMENT,
             _rosterContent(st.scene, 'No other characters present.', st.scene_location),
             ['scene', 'present', 'here'], (settings.ruleOrder ?? 50) - 3, settings, 'SCENE');
+        // Stamp the location's arrival index when it changed (for location-change memories).
+        if (st.scene_location !== beforeLoc) st.scene_location_since = chatLen;
+        // Fire autonomous-memory triggers in the background (opt-in; never blocks the pipeline).
+        _fireSceneAutoMemory(before, beforeLoc, beforeLocSince, st, settings).catch(() => {});
+    }
     return changed;
+}
+
+/** Scene-exit + location-change auto-memory triggers (opt-in, serialized, background).
+ *  Called fire-and-forget so a slow side-generation never delays block processing. */
+async function _fireSceneAutoMemory(before, beforeLoc, beforeLocSince, st, settings) {
+    if (!settings?.autoMemory || typeof autoWriteSubjectMemory !== 'function') return;
+    // Departed named subjects → episodic memory of their time on-screen (serialized so
+    // multiple simultaneous departures don't collide on the summarizer's re-entrancy lock).
+    if (settings.autoMemoryOnSceneExit) {
+        const stillHere = new Set(Object.keys(st.scene || {}));
+        for (const m of before) {
+            if (stillHere.has(m.slug)) continue;
+            await autoWriteSubjectMemory(m.name, 'npc', m.since_msg, settings, 'scene-exit');
+        }
+    }
+    // Location change → memory for the location we just left.
+    if (settings.autoMemoryOnLocationChange && beforeLoc && beforeLoc !== st.scene_location)
+        await autoWriteSubjectMemory(beforeLoc, 'location', beforeLocSince, settings, 'location-change');
 }
 
 // ── Panels ─────────────────────────────────────────────────────────────────────

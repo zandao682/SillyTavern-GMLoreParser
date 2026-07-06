@@ -188,6 +188,105 @@ async function processNpcMemoryDirect(npcName, memType, title, content, keywords
     return writeSubjectMemory(npcName, 'npc', memType, title, content, keywords, settings);
 }
 
+// ── Autonomous / dynamic memory capture (0.0.19) ───────────────────────────────
+// Create [Memory] entries from the transcript even when the model emits no memory
+// block. Everything here is opt-in (settings.autoMemory) and writes NOTHING on any
+// failure/empty (never a terse stub). Auto memories are tagged extensions.auto:true.
+
+/** Build a transcript string from ctx.chat[startIndex .. end], capped to maxMessages. */
+function glpTranscriptSlice(startIndex, maxMessages) {
+    const chat = SillyTavern.getContext().chat || [];
+    let start = (typeof startIndex === 'number' && startIndex >= 0) ? startIndex : 0;
+    if (maxMessages && chat.length - start > maxMessages) start = chat.length - maxMessages;
+    return chat.slice(start)
+        .map(m => `${m.is_user ? 'User' : (m.name || 'GM')}: ${(m.mes || '').trim()}`)
+        .filter(l => l.length > 5)
+        .join('\n');
+}
+
+/** Personaless summarizer shared by auto-memory triggers. Returns '' on any failure or
+ *  empty output (caller decides — auto-memory writes nothing). Uses generateRaw (NOT
+ *  generateQuietPrompt) so the active card's persona can't turn the summary into a
+ *  re-emitted block; strips any stray block tag defensively. Re-entrancy guarded. */
+async function glpSummarizeTranscript(promptLines, transcriptSlice) {
+    if (window.__glpEnriching) return '';
+    const ctx = SillyTavern.getContext();
+    if (typeof ctx.generateRaw !== 'function') return '';
+    if (!transcriptSlice || !transcriptSlice.trim()) return '';
+    const systemPrompt = 'You are a campaign-memory summarizer. Output ONLY the memory text as plain prose — no headers, labels, quotes, JSON, or block tags. Do not roleplay or add commentary. If nothing notable occurred, output nothing.';
+    const prompt = [...promptLines, '--- TRANSCRIPT ---', transcriptSlice].filter(Boolean).join('\n');
+    try {
+        window.__glpEnriching = true;
+        const out = await ctx.generateRaw({ prompt, systemPrompt, responseLength: 300 });
+        let text = (out || '').trim();
+        const bi = text.search(/\[[A-Z][A-Z0-9_]*_(?:BEGIN|END)\]/);
+        if (bi >= 0) text = text.slice(0, bi).trim();
+        return text;
+    } catch (e) {
+        console.warn(`[${MODULE_NAME}] auto-memory summarize failed:`, e);
+        return '';
+    } finally {
+        window.__glpEnriching = false;
+    }
+}
+
+/** Autonomously write an episodic memory for a subject (prefix 'npc') or location
+ *  (prefix 'location') by summarizing the transcript from `sinceIndex` to now. No-op
+ *  when auto-memory is off, no campaign book, the window is under the min-message
+ *  threshold, the summary is empty, or an identical auto memory already exists. */
+async function autoWriteSubjectMemory(subjectName, prefix, sinceIndex, settings, reason, explicitSlice) {
+    if (!settings?.autoMemory || !settings.campaignLorebook || !subjectName) return false;
+    const minMsg = Math.max(1, parseInt(settings.autoMemoryMinMessages) || 4);
+    let slice;
+    if (typeof explicitSlice === 'string') {
+        // Chat-away flush: the live ctx.chat is already the NEW chat, so the caller
+        // passes a pre-built transcript captured from the chat we just left.
+        if (explicitSlice.split('\n').filter(l => l.trim()).length < minMsg) return false;
+        slice = explicitSlice;
+    } else {
+        const chat   = SillyTavern.getContext().chat || [];
+        const window = Math.max(2, parseInt(settings.autoMemoryEveryNMessages) || 20);
+        const start  = (typeof sinceIndex === 'number' && sinceIndex >= 0)
+            ? sinceIndex : Math.max(0, chat.length - window);
+        if (chat.length - start < minMsg) return false;
+        slice = glpTranscriptSlice(start, Math.max(chat.length - start, minMsg));
+    }
+    if (!slice.trim()) return false;
+
+    const what = prefix === 'location'
+        ? `the location "${subjectName}" — a specific record of what happened there`
+        : `"${subjectName}" — a specific record of what happened involving them`;
+    const text = await glpSummarizeTranscript([
+        `Write an episodic memory about ${what} in the scene below, in 2-4 sentences.`,
+        `Use ONLY information present in the transcript; do not invent details. If nothing notable involving ${prefix === 'location' ? 'this location' : `"${subjectName}"`} occurred, output nothing.`,
+    ], slice);
+    if (!text || !text.trim()) return false;   // empty fallback = write nothing (no stub)
+
+    const lb = subjectBookName(prefix, subjectName, settings);
+    await loadOrCreateLorebook(lb);
+    await linkToChat(lb);
+    // De-dup: skip if an auto memory with identical content already exists for this subject.
+    const existing = await SillyTavern.getContext().loadWorldInfo(lb);
+    const dup = existing && Object.values(existing.entries || {})
+        .some(e => e.extensions?.auto && (e.content || '').trim() === text.trim());
+    if (dup) return false;
+
+    const entry = {
+        comment:  `[Memory] ${subjectName} — ${text.trim().slice(0, 40)}`,
+        key:      expandNameKeys(subjectName), keysecondary: [],
+        content:  text.trim(),
+        constant: false, selective: false, selectiveLogic: 0,
+        order:    50, depth: settings.defaultScanDepth, disable: false, addMemo: true,
+        memo:     `Auto memory (${reason || 'scene'}) — gm-lore-parser v${VERSION}`,
+        position: 0, role: null,
+        extensions: { gm_lore_parser: true, type: `${prefix.toUpperCase()}_MEMORY`,
+            subject: subjectName, memory_type: 'episodic', enriched: true, auto: true, reason: reason || 'scene' },
+    };
+    await upsertEntry(lb, entry);
+    console.log(`[${MODULE_NAME}] Auto memory (${reason || 'scene'}) written for "${subjectName}".`);
+    return true;
+}
+
 function parseNpcCurrentValues(worldData, npcName) {
     const values = {};
     for (const comment of [`[NPC:State] ${npcName}`, `[NPC:Progression] ${npcName}`]) {

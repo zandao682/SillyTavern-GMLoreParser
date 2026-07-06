@@ -180,7 +180,8 @@ function buildEventsPanel(world_events) {
     return sorted.map(e => {
         const cls = `glp-event-${(e.status || 'ongoing').toLowerCase()}`;
         const loc = e.location ? ` <span class="glp-event-loc">${e.location}</span>` : '';
-        return `<div class="glp-event-row ${cls}">
+        const lore = ` glp-lore-clickable" data-lore="[World Event] ${String(e.title).replace(/"/g, '&quot;')}" title="Click for event details`;
+        return `<div class="glp-event-row ${cls}${lore}">
             <span class="glp-event-title">${e.title}</span>${loc}
             <span class="glp-event-status">${e.status}</span>
             ${e.description ? `<div class="glp-event-desc">${e.description}</div>` : ''}

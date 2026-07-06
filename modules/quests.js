@@ -153,7 +153,8 @@ function buildQuestPanelHTML(quests) {
         const objDone     = q.objectives.filter(o => o.done).length;
         const objTotal    = q.objectives.length;
         const objStr      = objTotal ? `<span class="glp-quest-obj">${objDone}/${objTotal}</span>` : '';
-        return `<div class="glp-quest-row ${statusClass}">
+        const loreAttr = `class="glp-quest-row glp-lore-clickable ${statusClass}" data-lore="[Quest] ${String(q.title).replace(/"/g, '&quot;')}" title="Click for quest details"`;
+        return `<div ${loreAttr}>
             <span class="glp-quest-title">${q.title}</span>
             ${rankBadge}${objStr}
             <span class="glp-quest-status">${q.status}</span>

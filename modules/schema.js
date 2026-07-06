@@ -93,22 +93,49 @@ function applyRegen(schemaFields, values, elapsedMinutes, isResting) {
  *  entity has no value for, to avoid blank rows). Mutates and returns the schema. */
 function augmentSchemaWithDefAttributes(schema, values) {
     if (!schema) return schema;
-    const attrs = (typeof getAttributes === 'function') ? getAttributes() : [];
-    if (!Array.isArray(attrs) || !attrs.length) return schema;
     schema.fields = schema.fields || {};
     schema.groups = schema.groups || [];
     const v = values || {};
-    let added = false;
-    for (const a of attrs) {
-        if (!a.key || schema.fields[a.key]) continue;
-        if (v[a.key] === undefined || v[a.key] === null || v[a.key] === '') continue;
-        schema.fields[a.key] = {
-            label: a.label || a.abbr || a.key, abbr: a.abbr || '', description: a.description || '',
-            type: 'value', group: 'attributes', mutability: MUTABILITY.GM_EVENT,
-        };
-        added = true;
+    let touched = false;
+
+    // (a) Default group for vitals-like fields that lack one, so HP/MP/Vigor (and any
+    //     bar/pool field) land in 'vitals' instead of the 'other' catch-all. This is
+    //     what left HP grouped with the attributes when a char_create schema omitted
+    //     `group:` on its fields.
+    for (const d of Object.values(schema.fields)) {
+        if (d && !d.group && (d.type === 'bar' || d.type === 'pool' || d.max_field)) {
+            d.group = 'vitals'; touched = true;
+        }
     }
-    if (added && !schema.groups.includes('attributes')) schema.groups.push('attributes');
+
+    // (b) System-Definition attributes: add any the character has a value for but the
+    //     schema is missing, AND correct an existing attribute field that was left
+    //     ungrouped or dumped in 'other' (e.g. a char_create schema block without
+    //     `group:`). Fields already carrying a real group are left untouched.
+    const attrs = (typeof getAttributes === 'function') ? getAttributes() : [];
+    if (Array.isArray(attrs)) {
+        for (const a of attrs) {
+            if (!a.key) continue;
+            const ex = schema.fields[a.key];
+            if (ex) {
+                if (!ex.group || ex.group === 'other') { ex.group = 'attributes'; touched = true; }
+                continue;
+            }
+            if (v[a.key] === undefined || v[a.key] === null || v[a.key] === '') continue;
+            schema.fields[a.key] = {
+                label: a.label || a.abbr || a.key, abbr: a.abbr || '', description: a.description || '',
+                type: 'value', group: 'attributes', mutability: MUTABILITY.GM_EVENT,
+            };
+            touched = true;
+        }
+    }
+
+    // Make sure the groups we assigned exist so they actually render as sections.
+    if (touched) {
+        for (const g of ['vitals', 'attributes'])
+            if (!schema.groups.includes(g) && Object.values(schema.fields).some(d => d.group === g))
+                schema.groups.push(g);
+    }
     return schema;
 }
 
