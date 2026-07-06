@@ -4,6 +4,10 @@ A **manual**, reproducible test plan for `system-designer-card.json` (**The Arch
 
 The Architect is the most failure-prone artifact in the toolkit: a long multi-stage reasoning process that must end in a strict, machine-consumed output (`[CARD_OUTPUT]` + `[LOREBOOK_OUTPUT]`). A subtly malformed produced card breaks downstream play silently, so this plan validates **both** the design conversation and the artifact, then **imports the artifact and plays it** to prove the designed system actually runs.
 
+> **Alternative designer — The Forge (A/B).** A second designer card, `system-forge-card.json` (**The Forge**), emits the **same** card-assembly protocol but is rebuilt for small local LLMs: a lean (~3.4k) always-on `system_prompt`, a strict *ask → confirm → show the filled template → emit one block* loop, a `mes_example` that demonstrates the exact filled-template emission, and the full per-stage template depth moved into **keyword-triggered `character_book` entries** (so only the current stage's template is in context). This plan applies to The Forge unchanged (same brief, same Part B/C artifact checks). To pick the better card for your model, run **§ A/B side-by-side** below.
+>
+> **§ A/B side-by-side (same brief, one model).** With the local model and P2.5 satisfied (immersive global System Prompt OFF), run the **same Emberhold brief** twice — once with The Architect, once with The Forge, pacing one stage at a time — and score each on: (a) **block fidelity** (literal `[..._BEGIN]` tags vs `##`/`**` markdown or narration); (b) **narration-instead-of-emit** incidents ("I will now emit…" with no block); (c) **stage adherence / state drift** across turns; (d) whether **`[CARD_FINALIZE]` passes the completeness gate on the first try**; (e) produced-card structural validity (Part B: `JSON.parse`, required fields, `[SYSTEM_DEF]` parses, ≥1 non-empty entry). Record the two columns in `test-runs/designer-ab-<date>.md`; the card with materially fewer fidelity/narration failures wins for that model.
+
 ---
 
 ## 1. Purpose & scope

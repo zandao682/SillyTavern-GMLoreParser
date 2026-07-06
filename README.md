@@ -649,6 +649,15 @@ Two manual test plans live alongside the code:
 - [`TESTING.md`](TESTING.md) — tests the **extension** (block parsing, panel, commands, tiered context) via the **Test Harness** card (`test-harness-card.json`), a deterministic block emitter: import it, type `emit: <block>` (e.g. `emit: entity player`) and the reply carries exactly that block so the parser processes it. `emit: scenario smoke` runs a one-turn end-to-end smoke check. Blocks are only parsed in AI messages, which is why the harness is a character card rather than copy-paste snippets.
 - [`ARCHITECT-TESTING.md`](ARCHITECT-TESTING.md) — tests **The Architect** (`system-designer-card.json`, the staged system *designer*) and the **GM card it produces**: a reproducible "Emberhold" design brief drives the staged conversation, then the produced card/lorebook are structurally validated and **imported & played** to prove the designed system runs on the extension.
 
+### Two designer cards (A/B)
+
+There are **two** system-designer cards that emit the *same* card-assembly protocol; pick by your model:
+
+- **The Architect** (`system-designer-card.json`) — the original, deeply staged designer. Excellent on frontier models; its ~32k-char always-on `system_prompt` and free-form 17-stage flow are hard for small local models (they narrate instead of emitting, or write `##` headings instead of literal `[...]` tags).
+- **The Forge** (`system-forge-card.json`) — a from-scratch alternative **rebuilt for small local LLMs**. Same protocol and completeness gate, but a lean (~5k) always-on prompt and a **block-first** loop: every reply **leads with one literal card block** (the decision just made) and then the guidance prose — the Veridia "status-header" pattern, so the block survives even when an immersive "write a paragraph" System Prompt is active. The card opens on turn one (`[CARD_BEGIN]`), and the full per-stage template depth lives in **keyword-triggered lorebook entries** that page in only when each stage is reached. Verified live on local gemma **with the immersive System Prompt on**, emitting captured blocks across turns.
+
+The Architect generally needs the immersive **global** System Prompt disabled while designing (a prose-roleplay note prepended on top overrides its structured output); The Forge is built to work **with it on**. See each card's `creator_notes`.
+
 ---
 
 ## License
