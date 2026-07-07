@@ -144,5 +144,24 @@ Ran The Forge as a real user would: describe the game, answer its questions in p
 
 **Net:** with the two fixes, The Forge now runs **end-to-end on pure natural language** under an immersive System Prompt — opens the card, drives its own stages, emits blocks block-first, and **finalizes on its own into a downloadable card whose keystone carries the literal `[SYSTEM_DEF]` block**. Remaining rough edges are internal-format nuances, not flow failures, and the completeness gate remains the backstop.
 
+## Iteration 6 — user's real design run: four issues found + fixed
+
+A full natural design session (sci-fi "Ashford" system) surfaced four concrete problems, diagnosed from the chat log:
+
+1. **System name ignored.** {{user}} said "a game in the Ashford system"; The Forge named it **"Emberhold"** and kept it — copying the name baked into `mes_example`. **Root cause:** small models lift concrete values out of the examples. **Fix (card):** added a **"USE {{user}}'S ANSWERS — never the examples' values"** section to `system_prompt`, and changed the `mes_example`/templates to neutral placeholders ("Aetheria") with an explicit "these are format only; use {{user}}'s real name — if unstated, ASK, don't default."
+2. **Resolution never asked; d100 assumed.** {{user}} implied GM-discretion-by-attribute; The Forge silently baked in **"d100 resolution."** **Fix (card):** Stage 3 is now a **REQUIRED ask** ("NEVER assume d100 or any default"; GM-discretion is a valid answer to capture), reinforced in the design order.
+3. **No time/calendar stage.** The design order had none. **Fix (card):** added **Stage 13b — Time & Calendar** (ask how in-world time advances; emit a `[Rule] Time` entry) to the order + a `[Template]` entry.
+4. **Stray `[CARD_BEGIN]` before finalize wiped the whole draft** → nothing generated (confirmed: draft ended empty). **Fix (extension — the robust one):** `applyCardBegin` now treats a `[CARD_BEGIN]` on an **already-open** draft as a **rename only** — it keeps every accumulated field/entry instead of resetting. **Verified live:** after building a draft (name + system_prompt + `[Rule] Resolution`), a second `[CARD_BEGIN] name: … (Final)` left the field + entry intact and only updated the name (`preserved: true`). The exact failure that lost the card is now impossible; the prompt-side "emit CARD_BEGIN once" guidance remains as a first line of defense.
+
+Fixes 1–3 are prompt-side (best-effort on a 4B model); fix 4 is in code (guaranteed). Docs: What's-New + `TESTING.md` CARDBLD-10 (repeat-begin preserves draft).
+
+**Confirmation run — natural "Duskmoor" gothic-horror session (immersive ON):**
+- ✅ **Name respected.** Given "a system called Duskmoor," the card finalized as **"Duskmoor GM"** (console: `Card assembly finalized: "Duskmoor GM"`) — never the example's placeholder. Fix #1 holds.
+- ✅ **Card generated + no draft wipe.** The draft carried through to finalize intact; the produced card's keystone entry contained the **literal `[SYSTEM_DEF]` block** (so, unlike the lost run, **no** "no [System Definition] entry" warning). The `CARD_BEGIN on an open draft — kept N field(s)` log confirms the rename-preserve fix firing. Fix #4 holds.
+- ❌→fixed **Resolution still defaulted to d100** this run, because the `mes_example` still *contained* "d100" as a copyable value. **Follow-up fix:** removed **every** occurrence of "d100" from the card — the example now demonstrates a distinctive dice-pool, and the anti-default guidance no longer names d100 (which was itself priming the model). d100 now appears nowhere in the card.
+- ⚠️ **Time:** the session captured the time concern when raised but was short-circuited to finalize before reaching Stage 13b, so the "asks about time unprompted" path wasn't walk-tested — the stage + template are in place.
+
+**Net after this round:** name and card-generation are confirmed reliable on the local model under an immersive prompt; the d100 resolution bleed is addressed at its source (removed from the card); time coverage is added structurally. The remaining softness is inherent to a 4B model skipping/short-cutting stages — the completeness gate + the code-side draft-preservation guarantee a *valid* card regardless.
+
 ## Environment note
-Iteration 1 toggled the global System Prompt OFF then restored it to ON. Iterations 2–5 ran with it **ON** (validating block-first under the real condition); the immersive prompt was briefly toggled OFF only for the content-free finalize attempt, then restored to ON (as originally found). Finalize was completed via deterministic block injection through the extension's real handler. Server not restarted; nothing committed.
+Iteration 1 toggled the global System Prompt OFF then restored it to ON. Iterations 2–6 ran with it **ON** (validating block-first under the real condition); the immersive prompt was briefly toggled OFF only for the content-free finalize attempt, then restored to ON (as originally found). Finalize was completed via deterministic block injection through the extension's real handler. Server not restarted; nothing committed.
