@@ -103,6 +103,14 @@ var DEFAULT_SETTINGS = Object.freeze({
     interceptCommands: true, plotLorebook: '',
     injectResolution: true,
     tieredContext: true,      // lean always-on core + keyword-triggered [Player:*] detail (off = legacy monolithic injection)
+    alwaysOnRulesDigest: true, // append a compact per-subsystem rules digest (tier names/scales/mechanic/ladders) to the always-on [System Definition] entry, so the GM knows every rule's shape on turn 1 before any keyword fires
+    fullRulesAlwaysOn: false,  // promote the detailed [System Rule] entries to constant:true (always-on) instead of keyword-triggered — richer but heavier context
+    cardAutoRetry: true,       // when a [CARD_FINALIZE] gate blocks (missing fields/entry/name), auto-fire a headless generateRaw for ONLY the missing blocks and re-attempt — instead of relying on a manual nudge
+    cardAutoRetryMax: 2,       // max headless auto-retry rounds per card draft before falling back to the manual-nudge toast
+    // ── Optional 2nd-pass state extractor (dual-model; Multihog-style) ──────────
+    stateExtractorMode: 'off', // 'off' | 'fallback' (run only when the narrator emitted NO state blocks) | 'always' (run every GM turn — pair with a pure-prose narrator)
+    stateExtractorProfileId: '', // ST connection profile id for the extractor pass ('' = same model as the narrator, via generateRaw)
+    telemetryEnabled: false,   // accumulate per-chat token/cost for GLP's own side-generations (extractor, memory summaries, card auto-retry) so the dual-model overhead can be measured
     pinPanel: false,          // keep the GM State drawer locked open
     showPartyPanel: true, showScenePanel: true,
     // ── Narrative header (merged from gm-narrative-header) ──────────────────

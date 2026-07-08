@@ -685,17 +685,28 @@ async function saveSystemDef(def, settings) {
     state.system_def = def;
     await saveCharState();
     if (settings.campaignLorebook) {
+        // Always-on summary + optional compact rules digest so the GM knows every
+        // subsystem's shape (tier names/scales/mechanic/ladders) on turn 1, before
+        // any keyword fires the detailed [System Rule] entry.
+        let summary = buildSystemDefSummary(def);
+        if (settings.alwaysOnRulesDigest !== false) {
+            const digest = buildSystemRulesDigest(def);
+            if (digest) summary += `\n\n${digest}`;
+        }
         const entry = entryBase(
             SYSTEM_DEF_COMMENT, ['system definition', 'ruleset'],
-            buildSystemDefSummary(def), settings.ruleOrder ?? 50, settings,
+            summary, settings.ruleOrder ?? 50, settings,
             { type: 'SYSTEM_DEF', system_def: def });
         entry.constant = true;   // always in context
         await upsertEntry(settings.campaignLorebook, entry);
 
-        // Detailed mechanics as keyword-triggered [System Rule] entries (on demand).
+        // Detailed mechanics as [System Rule] entries. Keyword-triggered by default;
+        // promoted to always-on (constant) when fullRulesAlwaysOn is set.
         if (def.emit_rule_entries !== false) {
-            for (const re of buildSystemRuleEntries(def, settings))
+            for (const re of buildSystemRuleEntries(def, settings)) {
+                if (settings.fullRulesAlwaysOn === true) re.constant = true;
                 await upsertEntry(settings.campaignLorebook, re);
+            }
         }
         await pruneSystemRuleEntries(def, settings);   // drop stale rules (feature off / disabled emit)
 
@@ -994,6 +1005,63 @@ function buildSystemDefSummary(def) {
     if (def.inventory && def.inventory.model !== 'freeform')
         lines.push(`Inventory: ${def.inventory.model}${def.inventory.capacity ? ` (${def.inventory.capacity} ${def.inventory.unit})` : ''}`);
     return lines.join('\n');
+}
+
+/** Compact always-on "rules digest": one line per enabled subsystem carrying the
+ *  vocabulary the GM needs on turn 1 — tier NAMES, scales, mechanic + difficulty,
+ *  ladders, thresholds — so the narrator knows every rule's *shape* before any
+ *  keyword fires the detailed [System Rule] entry. Drawn from the same def fields
+ *  the rule descriptors use, kept to ~1 line each. Returns '' when nothing to add. */
+function buildSystemRulesDigest(def) {
+    const f = def.features || {};
+    const on = k => f[k] !== false;
+    const lines = [];
+
+    const r = def.resolution || {};
+    if (r.mechanic) {
+        let s = `Resolution: ${r.mechanic}`;
+        if (r.difficulty) s += `; DC ${r.difficulty}`;
+        if (r.crit)       s += `; crit ${r.crit}`;
+        lines.push(s);
+    }
+
+    if (on('capabilities') && def.capabilities) {
+        const cats = def.capabilities.categories || [];
+        let s = `Capabilities: ${cats.join(', ') || '—'}`;
+        const cp = def.capabilities.category_progression || {};
+        if (Object.keys(cp).length) s += `; ${Object.entries(cp).map(([c, p]) => `${c}→${p}`).join(', ')}`;
+        lines.push(s);
+        // Each progression's tier ladder on its own line — never merge distinct
+        // ladders into one chain (that would imply a false ordering).
+        for (const p of (def.progressions || [])) {
+            if (p.type === 'none') continue;
+            const tn = p.tier_names || (['points_tiers', 'xp_levels', 'milestone'].includes(p.type) ? DEFAULT_TIER_NAMES : []);
+            lines.push(tn.length ? `  ${p.id} (${p.type}): ${tn.join(' < ')}` : `  ${p.id} (${p.type})`);
+        }
+    }
+
+    if (on('reputation') && def.reputation?.tiers?.length) {
+        const rep = def.reputation;
+        lines.push(`Reputation: ${rep.tiers.join(' < ')} (${rep.scale_min}–${rep.scale_max}, init ${rep.initial})`);
+    }
+
+    if (on('ranks')) {
+        const ladder = def.rank_ladder || RANK_LADDER;
+        if (ladder?.length) lines.push(`Ranks: ${ladder.join(' < ')}`);
+    }
+
+    if (on('companions') && def.companions) {
+        const c = def.companions;
+        const ly = def.loyalty || {};
+        lines.push(`Companions: roles ${(c.roles || []).join(', ') || '—'}; lieutenant role ${c.lieutenant_role}; loyalty ${ly.scale_min ?? 0}–${ly.scale_max ?? 100}`);
+    }
+
+    if (on('needs')) {
+        const n = def.needs || {};
+        lines.push(`Needs: warn ${n.warn_threshold ?? 30}, critical ${n.critical_threshold ?? 10}`);
+    }
+
+    return lines.length ? `Rules digest (subsystem parameters):\n${lines.map(l => `• ${l}`).join('\n')}` : '';
 }
 
 /** Context block documenting how checks are resolved, so the GM stays consistent. */

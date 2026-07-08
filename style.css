@@ -2,6 +2,25 @@
    Fully schema-driven panel. Uses ST CSS variables throughout.
 */
 
+/* ── GLP semantic palette ─────────────────────────────────────────────────
+   Panel state colors are centralized here so a campaign/theme can override any
+   of them from SillyTavern's Custom CSS without touching the extension, e.g.:
+       :root { --glp-crit: #ff3355; --glp-rep-hostile: #cc2222; }
+   Each usage keeps the original value as a var() fallback, so an unset variable
+   renders exactly as before. */
+:root {
+    --glp-ok:           #80c870;   /* healthy / success (needs ok, done) */
+    --glp-pos:          #90c870;   /* positive (loyalty, averted, friendly rep) */
+    --glp-warn:         #e0a040;   /* caution */
+    --glp-crit:         #d04040;   /* critical */
+    --glp-danger:       #e08080;   /* affliction / condition text */
+    --glp-rep-hostile:  #e06060;
+    --glp-rep-cold:     #6090c8;
+    --glp-rep-neutral:  #8888aa;
+    --glp-rep-allied:   #60d0a8;
+    --glp-rep-sworn:    #d4b060;
+}
+
 /* ── Settings panel ─────────────────────────────────────────────────────── */
 
 .glp-settings { margin-top: 4px; }
@@ -28,6 +47,33 @@
     padding-top: 4px;
     border-top: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.1));
 }
+/* Collapsible settings groups — a section-label header that folds its controls.
+   Mirrors the status-panel <details> disclosure idiom (hanging ▸ marker). Kept as a
+   block (NOT display:flex) so the group establishes intrinsic width — a flex-column
+   details nested in the flex-column .inline-drawer-content collapses to 0 width when
+   the settings are moved into the flex-row pop-out panel. Child spacing via margin. */
+.glp-settings-group {
+    display: block; margin: 0; padding-top: 6px;
+    border-top: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.1));
+}
+.glp-settings-group > *:not(summary) { margin-top: 10px; }
+.glp-settings-group > summary {
+    cursor: pointer; user-select: none; position: relative;
+    list-style: none; padding-left: 16px;
+    font-size: 0.75em; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--SmartThemeQuoteColor, #9b8fd6);
+}
+.glp-settings-group > summary::-webkit-details-marker { display: none; }
+.glp-settings-group > summary::before {
+    content: '▸'; position: absolute; left: 2px; top: 0;
+    color: var(--SmartThemeEmColor, #888); transition: transform 0.15s;
+}
+.glp-settings-group[open] > summary::before { transform: rotate(90deg); }
+/* Pop-out: the settings' .inline-drawer-content is moved into a fixed-width floating
+   flex-row panel (control bar + content). Let the content fill the remaining width and
+   wrap, instead of keeping its wide in-drawer size and overflowing (clipped) the panel. */
+#glp-settings-popout-panel { overflow: auto; }
+#glp-settings-popout-panel > .inline-drawer-content { flex: 1 1 auto; min-width: 0; }
 .glp-field-setting {
     display: flex; flex-direction: column; gap: 3px;
 }
@@ -257,7 +303,7 @@
 .glp-condition-pill {
     background: rgba(200,80,80,0.18);
     border: 1px solid rgba(200,80,80,0.4);
-    color: #e08080;
+    color: var(--glp-danger, #e08080);
     border-radius: 4px; padding: 1px 6px;
     font-size: 0.85em;
 }
@@ -507,18 +553,18 @@
 .glp-rep-tier { font-size: 0.78em; text-transform: uppercase; letter-spacing: 0.03em; white-space: nowrap; }
 
 /* Tier color mappings */
-.glp-rep-hostile  { color: #e06060; }
-.glp-rep-hostile.glp-rep-bar  { background: #e06060; }
-.glp-rep-cold     { color: #6090c8; }
-.glp-rep-cold.glp-rep-bar     { background: #6090c8; }
+.glp-rep-hostile  { color: var(--glp-rep-hostile, #e06060); }
+.glp-rep-hostile.glp-rep-bar  { background: var(--glp-rep-hostile, #e06060); }
+.glp-rep-cold     { color: var(--glp-rep-cold, #6090c8); }
+.glp-rep-cold.glp-rep-bar     { background: var(--glp-rep-cold, #6090c8); }
 .glp-rep-neutral  { color: var(--SmartThemeEmColor, #999); }
-.glp-rep-neutral.glp-rep-bar  { background: #8888aa; }
-.glp-rep-friendly { color: #90c870; }
-.glp-rep-friendly.glp-rep-bar { background: #90c870; }
-.glp-rep-allied   { color: #60d0a8; }
-.glp-rep-allied.glp-rep-bar   { background: #60d0a8; }
-.glp-rep-sworn    { color: #d4b060; }
-.glp-rep-sworn.glp-rep-bar    { background: #d4b060; }
+.glp-rep-neutral.glp-rep-bar  { background: var(--glp-rep-neutral, #8888aa); }
+.glp-rep-friendly { color: var(--glp-pos, #90c870); }
+.glp-rep-friendly.glp-rep-bar { background: var(--glp-pos, #90c870); }
+.glp-rep-allied   { color: var(--glp-rep-allied, #60d0a8); }
+.glp-rep-allied.glp-rep-bar   { background: var(--glp-rep-allied, #60d0a8); }
+.glp-rep-sworn    { color: var(--glp-rep-sworn, #d4b060); }
+.glp-rep-sworn.glp-rep-bar    { background: var(--glp-rep-sworn, #d4b060); }
 
 /* ── World events panel ──────────────────────────────────────────────────── */
 
@@ -530,7 +576,7 @@
 }
 .glp-event-ongoing  { border-left-color: #e6c96d; }
 .glp-event-resolved { border-left-color: var(--SmartThemeEmColor, #888); }
-.glp-event-averted  { border-left-color: #90c870; }
+.glp-event-averted  { border-left-color: var(--glp-pos, #90c870); }
 
 .glp-event-title {
     font-weight: 600; color: var(--SmartThemeBodyColor, #ddd);
@@ -546,7 +592,7 @@
 }
 .glp-event-ongoing .glp-event-status  { color: #e6c96d; }
 .glp-event-resolved .glp-event-status { color: var(--SmartThemeEmColor, #888); }
-.glp-event-averted .glp-event-status  { color: #90c870; }
+.glp-event-averted .glp-event-status  { color: var(--glp-pos, #90c870); }
 
 .glp-event-desc {
     font-size: 0.82em; color: var(--SmartThemeEmColor, #aaa);
@@ -599,7 +645,7 @@
 }
 .glp-loyalty-bar {
     height: 100%; border-radius: 2px; transition: width 0.35s;
-    background: #90c870;
+    background: var(--glp-pos, #90c870);
 }
 .glp-loyalty-val { font-size: 0.82em; color: var(--SmartThemeEmColor, #999); min-width: 24px; text-align: right; }
 
@@ -613,7 +659,7 @@
     font-size: 0.85em; padding: 3px 6px; border-radius: 4px;
     background: rgba(255,255,255,0.04);
 }
-.glp-create-done { color: #80c870; }
+.glp-create-done { color: var(--glp-ok, #80c870); }
 .glp-create-pending { color: var(--SmartThemeEmColor, #999); font-style: italic; }
 .glp-creation-hint {
     font-size: 0.75em; color: var(--SmartThemeEmColor, #999);
@@ -658,9 +704,9 @@
     background: rgba(255,255,255,0.08);
 }
 .glp-need-bar-fill { height: 100%; border-radius: 3px; transition: width 0.4s; }
-.glp-need-ok   { background: #80c870; }
-.glp-need-warn { background: #e0a040; }
-.glp-need-crit { background: #d04040; }
+.glp-need-ok   { background: var(--glp-ok, #80c870); }
+.glp-need-warn { background: var(--glp-warn, #e0a040); }
+.glp-need-crit { background: var(--glp-crit, #d04040); }
 .glp-need-val { font-size: 0.8em; color: var(--SmartThemeEmColor, #999); text-align: right; }
 
 /* ── Equipment & inventory (v9) ───────────────────────────────────────────── */

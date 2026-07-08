@@ -170,6 +170,7 @@ async function enrichMemoryContent(subjectName, memType, rawContent, settings) {
     try {
         window.__glpEnriching = true;
         const out = await ctx.generateRaw({ prompt, systemPrompt, responseLength: 300 });
+        glpRecordPass({ kind: 'memory', promptText: `${systemPrompt}\n${prompt}`, outputText: out || '' });
         let text = (out || '').trim();
         // Defensive: if the model still slipped a block tag in, keep only the prose before it.
         const bi = text.search(/\[[A-Z][A-Z0-9_]*_(?:BEGIN|END)\]/);
@@ -218,6 +219,7 @@ async function glpSummarizeTranscript(promptLines, transcriptSlice) {
     try {
         window.__glpEnriching = true;
         const out = await ctx.generateRaw({ prompt, systemPrompt, responseLength: 300 });
+        glpRecordPass({ kind: 'memory', promptText: `${systemPrompt}\n${prompt}`, outputText: out || '' });
         let text = (out || '').trim();
         const bi = text.search(/\[[A-Z][A-Z0-9_]*_(?:BEGIN|END)\]/);
         if (bi >= 0) text = text.slice(0, bi).trim();

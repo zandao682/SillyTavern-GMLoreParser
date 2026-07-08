@@ -38,6 +38,7 @@ var GLP_MODULES_BASE = (function () {
 var GLP_MODULE_LOAD_ORDER = [
     'state',      // constants, block registries, settings/state accessors
     'utils',      // pure utilities, parseFields, extractBlocks, parseSchema
+    'telemetry',  // per-chat token/cost instrumentation for GLP's side-generations
     'lorebook',   // lorebook CRUD helpers
     'system',     // system definition (ruleset) — getSystemDef, evalFormula
     'schema',     // schema engine (applyFieldValue, regen, promotions)
@@ -147,6 +148,7 @@ function applyCardBegin(raw) {
     draft.name   = fields.name || 'Generated GM Card';
     draft.data   = {};
     draft.book_entries = [];
+    draft.auto_retries = 0;   // fresh draft — reset the finalize auto-retry budget
     console.log(`[${MODULE_NAME}] Card assembly opened: "${draft.name}".`);
     SillyTavern.getContext().toastr?.info(`Building card: "${draft.name}" — sections will assemble as you confirm each stage; it downloads on finalize.`, 'GM Lore Parser', { timeOut: 5000 });
     return true;
@@ -294,13 +296,28 @@ function _resolveCardName(draftName, bookEntries) {
     return '';
 }
 
+// The mandatory character-card fields a finalize requires.
+var CARD_REQUIRED_FIELDS = ['system_prompt', 'first_mes', 'post_history_instructions'];
+
+/** Pure completeness check for a card draft. Returns the deduped lore entries, the
+ *  resolved name, and the list of still-missing required pieces (empty = ready to
+ *  ship). Shared by applyCardFinalize (the gate) and autoCompleteCard (the retry). */
+function _cardMissing(draft) {
+    const { entries: bookEntries, dropped, shallow } = _dedupeBookEntries(draft.book_entries);
+    const finalName = _resolveCardName(draft.name, bookEntries);
+    const missing = CARD_REQUIRED_FIELDS.filter(k => !String(draft.data[k] || '').trim());
+    if (bookEntries.length === 0) missing.push('a non-empty character_book entry');
+    if (!finalName) missing.push('a system name (emit [CARD_BEGIN] name: <System> GM)');
+    return { bookEntries, finalName, missing, dropped, shallow };
+}
+
 function applyCardFinalize() {
     const draft = getCharState().card_draft;
     if (!draft.active) { console.warn(`[${MODULE_NAME}] CARD_FINALIZE outside an active card assembly — ignoring.`); return false; }
     // Clean the lore entries FIRST (drop duplicates + empty shells), so the gate below
     // judges the entries that will actually ship — not raw shells that vanish on
     // assembly (which would otherwise let a 0-entry card through).
-    const { entries: bookEntries, dropped, shallow } = _dedupeBookEntries(draft.book_entries);
+    const { bookEntries, finalName, missing, dropped, shallow } = _cardMissing(draft);
     if (dropped.length) {
         console.warn(`[${MODULE_NAME}] CARD_FINALIZE de-duped/dropped ${dropped.length} lore entr${dropped.length === 1 ? 'y' : 'ies'}: ${dropped.join('; ')}`);
         SillyTavern.getContext().toastr?.info(`Removed ${dropped.length} duplicate/empty lore entr${dropped.length === 1 ? 'y' : 'ies'} during assembly.`, 'GM Lore Parser', { timeOut: 5000 });
@@ -312,11 +329,6 @@ function applyCardFinalize() {
     // only honored once the mandatory fields and at least one REAL lore entry survive —
     // otherwise the draft stays active so emission can continue (mirrors the item-box
     // gate: reject the bad state rather than produce it).
-    const finalName = _resolveCardName(draft.name, bookEntries);
-    const REQUIRED_FIELDS = ['system_prompt', 'first_mes', 'post_history_instructions'];
-    const missing = REQUIRED_FIELDS.filter(k => !String(draft.data[k] || '').trim());
-    if (bookEntries.length === 0) missing.push('a non-empty character_book entry');
-    if (!finalName) missing.push('a system name (emit [CARD_BEGIN] name: <System> GM)');
     if (missing.length) {
         console.warn(`[${MODULE_NAME}] CARD_FINALIZE blocked — incomplete card (missing: ${missing.join(', ')}). Draft stays open.`);
         SillyTavern.getContext().toastr?.warning(`Card not finalized — still missing: ${missing.join(', ')}. Keep emitting, then finalize.`, 'GM Lore Parser', { timeOut: 6000 });
@@ -349,6 +361,94 @@ function applyCardFinalize() {
     return true;
 }
 
+/** The block a model should emit to supply a missing required field. */
+function _cardFieldTemplate(key) {
+    return `[CARD_FIELD_BEGIN]\nkey: ${key}\n\n<real ${key.replace(/_/g, ' ')} content>\n[CARD_FIELD_END]`;
+}
+
+/** Auto-retry the completeness gate (Multihog-style validate→retry, adapted to GLP's
+ *  block flow). When a [CARD_FINALIZE] is blocked, ask the model — via personaless
+ *  generateRaw — for ONLY the missing card-assembly blocks, harvest + apply them to the
+ *  open draft, and re-attempt finalize. Bounded by cardAutoRetryMax; stops early if a
+ *  round makes no progress. Never throws. Returns true iff the card finalized as a
+ *  result. Falls back to the manual-nudge toast when it can't complete. */
+async function autoCompleteCard(settings) {
+    if (settings.cardAutoRetry === false) return false;
+    if (window.__glpCardRetrying) return false;
+    const ctx = SillyTavern.getContext();
+    if (typeof ctx.generateRaw !== 'function') return false;
+    const draft = getCharState().card_draft;
+    if (!draft || !draft.active) return false;
+
+    const MAX = Math.max(1, parseInt(settings.cardAutoRetryMax) || 2);
+    draft.auto_retries = draft.auto_retries || 0;
+
+    try {
+        window.__glpCardRetrying = true;
+        while (draft.auto_retries < MAX) {
+            const { missing } = _cardMissing(draft);
+            if (!missing.length) break;
+            draft.auto_retries++;
+
+            // Focused, block-only request for exactly what's missing.
+            const wantName   = missing.some(m => m.startsWith('a system name'));
+            const wantEntry  = missing.some(m => m.startsWith('a non-empty character_book'));
+            const wantFields = missing.filter(m => /^[a-z_]+$/.test(m));   // field keys only
+            const templates = [];
+            if (wantName) templates.push('[CARD_BEGIN]\nname: <System> GM\n[CARD_END]');
+            for (const k of wantFields) templates.push(_cardFieldTemplate(k));
+            if (wantEntry) templates.push('[CARD_BOOK_ENTRY_BEGIN]\nkeys: <comma,separated,triggers>\ncomment: [System Definition]\nconstant: true\n\n<lore entry content — e.g. the [SYSTEM_DEF] block or a piece of world lore>\n[CARD_BOOK_ENTRY_END]');
+
+            const present = Object.keys(draft.data || {}).filter(k => String(draft.data[k] || '').trim());
+            const already = [
+                draft.name ? `Card name: ${draft.name}` : '',
+                present.length ? `Fields already present: ${present.join(', ')}` : '',
+                `Lore entries so far: ${(draft.book_entries || []).length}`,
+                draft.data?.system_prompt ? `system_prompt (excerpt): ${String(draft.data.system_prompt).slice(0, 600)}` : '',
+            ].filter(Boolean).join('\n');
+
+            const systemPrompt = 'You are finishing a partially-built SillyTavern character card for the gm-lore-parser extension. Output ONLY the requested card-assembly blocks as literal square-bracket tags — each block opened AND closed with its matching _END tag. Write real, coherent content that fits the card (never placeholders). No prose, no commentary, no markdown before/after the blocks.';
+            const prompt = [
+                'The card is missing the pieces below. Emit each as its block, in order, with real content:',
+                ...missing.map(m => `- ${m}`),
+                '',
+                'Use EXACTLY these block shapes (replace every <...> with real content):',
+                ...templates,
+                '',
+                'What is already built (make new content consistent with it):',
+                already || '(nothing yet)',
+            ].join('\n');
+
+            let out = '';
+            try { out = await ctx.generateRaw({ prompt, systemPrompt, responseLength: 1200 }); }
+            catch (e) { console.warn(`[${MODULE_NAME}] card auto-retry generateRaw failed:`, e); break; }
+            glpRecordPass({ kind: 'card-retry', promptText: `${systemPrompt}\n${prompt}`, outputText: out || '' });
+            const harvested = _normalizeBlockTags(_stripCodeFences(out || ''));
+
+            let applied = 0;
+            for (const b of extractBlocks(harvested, SHEET_BLOCKS.CARD_BEGIN.begin, SHEET_BLOCKS.CARD_BEGIN.end))
+                { applyCardBegin(b.raw); applied++; }
+            for (const b of extractBlocks(harvested, SHEET_BLOCKS.CARD_FIELD.begin, SHEET_BLOCKS.CARD_FIELD.end))
+                { if (applyCardField(b.raw)) applied++; }
+            for (const b of extractBlocks(harvested, SHEET_BLOCKS.CARD_BOOK_ENTRY.begin, SHEET_BLOCKS.CARD_BOOK_ENTRY.end))
+                { if (applyCardBookEntry(b.raw)) applied++; }
+
+            console.log(`[${MODULE_NAME}] card auto-retry ${draft.auto_retries}/${MAX}: applied ${applied} block(s) for missing [${missing.join(', ')}].`);
+            if (!applied) break;   // no progress — don't keep hammering the model
+        }
+    } finally {
+        window.__glpCardRetrying = false;
+    }
+
+    const { missing } = _cardMissing(getCharState().card_draft);
+    if (!missing.length) {
+        ctx.toastr?.info('Auto-completed the missing card pieces — finalizing.', 'GM Lore Parser', { timeOut: 4000 });
+        return applyCardFinalize();
+    }
+    ctx.toastr?.warning(`Auto-retry couldn't finish the card — still missing: ${missing.join(', ')}. Emit the block(s), then finalize.`, 'GM Lore Parser', { timeOut: 7000 });
+    return false;
+}
+
 // ── Message handlers ──────────────────────────────────────────────────────────
 
 async function onMessageReceived(messageId) {
@@ -363,11 +463,30 @@ async function onMessageReceived(messageId) {
     }
 
     const text = _normalizeBlockTags(_stripCodeFences(message.mes));
+    // Self-heal the extractor re-entrancy guard: turns are processed sequentially, so a
+    // still-set flag here means a prior extractor generation hung/was interrupted before
+    // its finally ran — clear it so the extractor never wedges permanently until reload.
+    window.__glpStateExtracting = false;
+    const headerChanged = captureHeaderFormat(messageId);   // narrative header (rendered at end)
+
+    // Apply the narrator's own emitted state/lore blocks.
+    const applied = await applyStateBlocks(text, settings);
+    // Optional 2nd-pass state extractor: recover state an immersive narrator dropped,
+    // or maintain state entirely for a pure-prose narrator. No-op unless enabled.
+    const extracted = await runStateExtractorPass(text, settings, applied);
+
+    const sheetChanged  = applied.sheetChanged || headerChanged || (extracted?.sheetChanged ?? false);
+    const loreSaved     = applied.loreSaved + (extracted?.loreSaved ?? 0);
+    const notifications = [...applied.notifications, ...(extracted?.notifications ?? [])];
+    await _finishMessage(messageId, text, settings, sheetChanged, loreSaved, notifications);
+}
+
+// Apply every gm-lore-parser state/lore block found in `text`, returning the change
+// accumulators. Shared by the narrator pass and the optional 2nd-pass extractor so
+// both feed the exact same handlers.
+async function applyStateBlocks(text, settings) {
     let sheetChanged = false;
     const notifications = [];
-
-    // ── Narrative header: capture a [HEADER_FORMAT] block (rendered at the end) ──
-    if (captureHeaderFormat(messageId)) sheetChanged = true;
 
     // ── System definition (must apply before any consumer this message) ────────
     for (const b of extractBlocks(text, SHEET_BLOCKS.SYSTEM_DEF.begin, SHEET_BLOCKS.SYSTEM_DEF.end)) {
@@ -478,8 +597,10 @@ async function onMessageReceived(messageId) {
         { if (applyCardField(b.raw)) sheetChanged = true; }
     for (const b of extractBlocks(text, SHEET_BLOCKS.CARD_BOOK_ENTRY.begin, SHEET_BLOCKS.CARD_BOOK_ENTRY.end))
         { if (applyCardBookEntry(b.raw)) sheetChanged = true; }
-    for (const b of extractBlocks(text, SHEET_BLOCKS.CARD_FINALIZE.begin, SHEET_BLOCKS.CARD_FINALIZE.end))
-        { if (applyCardFinalize()) sheetChanged = true; }
+    for (const b of extractBlocks(text, SHEET_BLOCKS.CARD_FINALIZE.begin, SHEET_BLOCKS.CARD_FINALIZE.end)) {
+        if (applyCardFinalize()) sheetChanged = true;
+        else if (await autoCompleteCard(settings)) sheetChanged = true;
+    }
 
     // ── Character creation blocks ──────────────────────────────────────────────
     for (const b of extractBlocks(text, SHEET_BLOCKS.CHAR_CREATE_BEGIN.begin, SHEET_BLOCKS.CHAR_CREATE_BEGIN.end))
@@ -537,6 +658,15 @@ async function onMessageReceived(messageId) {
             if (await processLocationMemory(b.raw, settings)) loreSaved++;
     }
 
+    return { sheetChanged, loreSaved, notifications };
+}
+
+// Finalize a processed message: persist state, refresh UI, emit notifications, hide
+// raw blocks, render the narrative header, and run autonomous-memory hooks. Split out
+// of onMessageReceived so the narrator pass and the 2nd-pass extractor share one commit.
+async function _finishMessage(messageId, text, settings, sheetChanged, loreSaved, notifications) {
+    const { toastr } = SillyTavern.getContext();
+
     // ── Post-processing ───────────────────────────────────────────────────────
     if (sheetChanged) {
         await saveCharState(); refreshStatusPanel(); injectCharacterContext(); await rebuildPlayerLoreEntries(settings);
@@ -566,6 +696,83 @@ async function onMessageReceived(messageId) {
     // ── Autonomous memory: periodic scene capture + snapshot for chat-away flush ──
     await _glpAutoMemoryPeriodic(settings);
     _glpCaptureSceneSnapshot(settings);
+}
+
+// ── Optional 2nd-pass state extractor (dual-model, Multihog-style) ─────────────
+// The narrator writes prose; a separate extraction pass reads that prose + current
+// state and emits the gm-lore-parser update blocks the narration implies, which then
+// flow through the SAME handlers (applyStateBlocks). This removes the block-emission
+// burden from an immersive narrator — GLP's most fragile point. Fully opt-in.
+
+/** Route a headless extraction generation: through a chosen ST connection profile when
+ *  one is set (a cheaper/faster extractor model, silent — no UI flicker), else the
+ *  active model via generateRaw. Returns raw text, or '' on any failure. Never throws. */
+async function runStateExtraction(systemPrompt, userPrompt, settings) {
+    const ctx = SillyTavern.getContext();
+    const profileId = String(settings.stateExtractorProfileId || '').trim();
+    if (profileId) {
+        const service = ctx.ConnectionManagerRequestService;
+        if (service && typeof service.sendRequest === 'function') {
+            try {
+                const raw = await service.sendRequest(
+                    profileId,
+                    [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }],
+                    undefined,
+                    { stream: false, extractData: true, includePreset: true, includeInstruct: true },
+                );
+                if (typeof raw === 'string') return raw;
+                return raw?.content ?? raw?.message?.content ?? raw?.choices?.[0]?.message?.content ?? raw?.choices?.[0]?.text ?? '';
+            } catch (e) {
+                console.warn(`[${MODULE_NAME}] state-extractor profile "${profileId}" failed; falling back to generateRaw:`, e);
+            }
+        } else {
+            console.warn(`[${MODULE_NAME}] ConnectionManagerRequestService unavailable; state extractor using the active model.`);
+        }
+    }
+    if (typeof ctx.generateRaw !== 'function') return '';
+    try { return (await ctx.generateRaw({ prompt: userPrompt, systemPrompt, responseLength: 600 })) || ''; }
+    catch (e) { console.warn(`[${MODULE_NAME}] state-extractor generateRaw failed:`, e); return ''; }
+}
+
+/** Run the 2nd-pass extractor over the narrator's latest message and apply whatever
+ *  blocks it emits through the shared handlers. Gated by stateExtractorMode: 'off'
+ *  (skip), 'fallback' (only when the narrator emitted no state blocks), 'always'.
+ *  Re-entrancy guarded; never throws. Returns the applied accumulators, or null. */
+async function runStateExtractorPass(narratorText, settings, priorResult) {
+    const mode = settings.stateExtractorMode || 'off';
+    if (mode === 'off') return null;
+    if (mode === 'fallback' && (priorResult?.sheetChanged || priorResult?.loreSaved > 0)) return null;
+    if (window.__glpStateExtracting) return null;
+    if (!String(narratorText || '').trim()) return null;
+
+    const def = getSystemDef();
+    const stateSummary = (typeof buildContextString === 'function' && buildContextString(getCharState())) || '';
+    const cheatSheet = (typeof buildBlockFormatEntries === 'function')
+        ? buildBlockFormatEntries(def, settings).map(e => e.content).join('\n\n') : '';
+
+    const systemPrompt = 'You are a game-state extractor for a tabletop RPG. Read the GM narration and the current character/world state, then output ONLY the gm-lore-parser update blocks that the narration IMPLIES actually changed (damage/healing, attribute or condition changes, currency, reputation, needs, party/scene changes, new items/quests, time passing, etc.). Output ONLY literal [BLOCK_BEGIN]…[BLOCK_END] tags exactly as shown in the formats — no prose, no commentary, no markdown. If nothing changed, output nothing.';
+    const userPrompt = [
+        stateSummary ? `CURRENT STATE:\n${stateSummary}` : '',
+        cheatSheet   ? `BLOCK FORMATS (copy the shape; change the values):\n${cheatSheet}` : '',
+        `GM NARRATION (extract state changes from this):\n${narratorText}`,
+    ].filter(Boolean).join('\n\n');
+
+    try {
+        window.__glpStateExtracting = true;
+        const out = await runStateExtraction(systemPrompt, userPrompt, settings);
+        glpRecordPass({ kind: 'extractor', promptText: `${systemPrompt}\n${userPrompt}`, outputText: out || '' });
+        const blocks = _normalizeBlockTags(_stripCodeFences(out || ''));
+        if (!blocks.trim()) return null;
+        const res = await applyStateBlocks(blocks, settings);
+        if (res.sheetChanged || res.loreSaved)
+            console.log(`[${MODULE_NAME}] 2nd-pass extractor applied blocks (sheet:${res.sheetChanged}, lore:${res.loreSaved}).`);
+        return res;
+    } catch (e) {
+        console.warn(`[${MODULE_NAME}] state extractor pass failed:`, e);
+        return null;
+    } finally {
+        window.__glpStateExtracting = false;
+    }
 }
 
 /** Periodic auto-memory: every N GM turns, summarize the current scene into an episodic
@@ -681,6 +888,13 @@ async function renderSettingsPanel() {
         `<option value="${n}" ${n === settings.campaignLorebook ? 'selected' : ''}>${n}</option>`
     ).join('');
 
+    // Connection profiles for the optional 2nd-pass extractor (blank = same as narrator).
+    const _profiles = SillyTavern.getContext().extensionSettings?.connectionManager?.profiles || [];
+    const extractorProfileOpts = _profiles.map(p =>
+        `<option value="${p.id}" ${p.id === settings.stateExtractorProfileId ? 'selected' : ''}>${p.name || p.id}</option>`
+    ).join('');
+    const em = settings.stateExtractorMode || 'off';
+
     const html = `
 <div class="glp-settings">
   <div class="inline-drawer">
@@ -702,7 +916,7 @@ async function renderSettingsPanel() {
       <label class="glp-row"><input type="checkbox" id="glp-notify"    ${settings.notifyOnSave     ? 'checked' : ''}><span>Show toast notifications</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-scan-user" ${settings.scanUserMessages ? 'checked' : ''}><span>Scan user messages for lore blocks</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-intercept" ${settings.interceptCommands? 'checked' : ''}><span>Intercept # commands</span></label>
-      <div class="glp-section-label">Panels</div>
+      <details class="glp-settings-group" open><summary>Panels</summary>
       <label class="glp-row"><input type="checkbox" id="glp-show-panel"    ${settings.showStatusPanel  ? 'checked' : ''}><span>Character status panel</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-show-skills"   ${settings.showSkillPanel   ? 'checked' : ''}><span>Skill panel</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-show-domain"   ${settings.showDomainPanel  ? 'checked' : ''}><span>Domain panel</span></label>
@@ -714,7 +928,8 @@ async function renderSettingsPanel() {
       <label class="glp-row"><input type="checkbox" id="glp-show-needs"    ${settings.showNeedsPanel   ? 'checked' : ''}><span>Needs panel</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-show-scene"    ${settings.showScenePanel!==false ? 'checked' : ''}><span>Scene panel</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-show-party"    ${settings.showPartyPanel!==false ? 'checked' : ''}><span>Party panel</span></label>
-      <div class="glp-section-label">Narrative Header</div>
+      </details>
+      <details class="glp-settings-group" open><summary>Narrative Header</summary>
       <label class="glp-row"><input type="checkbox" id="glp-hdr-enabled"   ${settings.headerEnabled!==false ? 'checked' : ''}><span>Prepend status header to GM messages</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-hdr-block"     ${settings.headerUseFormatBlock!==false ? 'checked' : ''}><span>Use [HEADER_FORMAT] block when present</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-hdr-every"     ${settings.headerShowOnEveryMsg!==false ? 'checked' : ''}><span>Show on every GM message</span></label>
@@ -726,6 +941,8 @@ async function renderSettingsPanel() {
         <label for="glp-hdr-manual">Manual header format (fallback)</label>
         <textarea id="glp-hdr-manual" class="text_pole" rows="2" placeholder="{name}  HP {hp}/{hp_max}  {conditions}  {time}">${settings.headerManualFormat || ''}</textarea>
       </div>
+      </details>
+      <details class="glp-settings-group" open><summary>Context &amp; lore injection</summary>
       <div class="glp-field-setting">
         <label for="glp-plot-lorebook">Plot Lorebook (optional)</label>
         <select id="glp-plot-lorebook" class="text_pole"><option value="">— auto (campaign-plot) —</option>${opts}</select>
@@ -734,18 +951,49 @@ async function renderSettingsPanel() {
       <label class="glp-row"><input type="checkbox" id="glp-inject-ctx"   ${settings.injectIntoContext?'checked' : ''}><span>Inject state into context</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-inject-res"   ${settings.injectResolution!==false?'checked' : ''}><span>Inject resolution mechanic into context</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-tiered-ctx"   ${settings.tieredContext!==false?'checked' : ''}><span>Tiered context (lean core + keyword-triggered detail)</span></label>
+      <label class="glp-row"><input type="checkbox" id="glp-rules-digest" ${settings.alwaysOnRulesDigest!==false?'checked' : ''}><span>Always-on rules digest (subsystem params in [System Definition])</span></label>
+      <label class="glp-row"><input type="checkbox" id="glp-full-rules"   ${settings.fullRulesAlwaysOn===true?'checked' : ''}><span>Full rules always-on (promote [System Rule] entries to constant)</span></label>
       <div class="glp-field-setting">
         <label for="glp-ctx-depth">Context injection depth</label>
         <input type="number" id="glp-ctx-depth" class="text_pole" min="0" max="20" value="${settings.contextDepth}">
       </div>
-      <div class="glp-section-label">Memory &amp; tools</div>
+      </details>
+      <details class="glp-settings-group" open><summary>Memory &amp; tools</summary>
       <label class="glp-row"><input type="checkbox" id="glp-enrich-mem" ${settings.enrichMemories ? 'checked' : ''}><span>Enrich memory content (summarize the scene into memory blocks)</span></label>
       <div class="glp-field-setting">
         <label for="glp-enrich-window">Memory enrichment window (messages)</label>
         <input type="number" id="glp-enrich-window" class="text_pole" min="2" max="50" value="${settings.enrichMemoryWindow ?? 10}">
       </div>
       <label class="glp-row"><input type="checkbox" id="glp-use-tools" ${settings.useFunctionTools ? 'checked' : ''}><span>Function tools for state changes (chat-completion backends)</span></label>
-      <div class="glp-section-label">Autonomous memory capture</div>
+      <label class="glp-row"><input type="checkbox" id="glp-card-autoretry" ${settings.cardAutoRetry!==false ? 'checked' : ''}><span>Auto-complete card assembly (headless retry for missing [CARD_*] blocks on finalize)</span></label>
+      <div class="glp-field-setting">
+        <label for="glp-card-autoretry-max">Card auto-retry rounds</label>
+        <input type="number" id="glp-card-autoretry-max" class="text_pole" min="1" max="5" value="${settings.cardAutoRetryMax ?? 2}">
+      </div>
+      <div class="glp-field-setting">
+        <label for="glp-extractor-mode">2nd-pass state extractor</label>
+        <select id="glp-extractor-mode" class="text_pole">
+          <option value="off"      ${em==='off'      ? 'selected' : ''}>Off (narrator emits its own blocks)</option>
+          <option value="fallback" ${em==='fallback' ? 'selected' : ''}>Fallback (only when the narrator emits none)</option>
+          <option value="always"   ${em==='always'   ? 'selected' : ''}>Always (pure-prose narrator)</option>
+        </select>
+        <small>A separate pass reads the GM's prose + current state and emits the state blocks itself — fixes an immersive narrator dropping blocks. Uses a personaless side-generation.</small>
+      </div>
+      <div class="glp-field-setting">
+        <label for="glp-extractor-profile">Extractor connection profile</label>
+        <select id="glp-extractor-profile" class="text_pole"><option value="">— same model as narrator —</option>${extractorProfileOpts}</select>
+        <small>Optional: run the extraction pass on a cheaper/faster model (a SillyTavern Connection Profile).</small>
+      </div>
+      <label class="glp-row"><input type="checkbox" id="glp-telemetry" ${settings.telemetryEnabled ? 'checked' : ''}><span>Measure side-generation token cost (extractor / memory / card-retry)</span></label>
+      <div class="glp-field-setting">
+        <div id="glp-telemetry-readout"><small>${settings.telemetryEnabled ? 'Enabled — send a few turns, then Refresh.' : 'Off — enable to accumulate per-chat token/cost for GLP&#39;s own model calls.'}</small></div>
+        <div class="flex-container" style="gap:6px;margin-top:4px;">
+          <div id="glp-telemetry-refresh" class="menu_button menu_button_icon"><i class="fa-solid fa-arrows-rotate"></i><span>Refresh</span></div>
+          <div id="glp-telemetry-reset" class="menu_button menu_button_icon"><i class="fa-solid fa-trash-can"></i><span>Reset</span></div>
+        </div>
+      </div>
+      </details>
+      <details class="glp-settings-group" open><summary>Autonomous memory capture</summary>
       <label class="glp-row"><input type="checkbox" id="glp-auto-mem" ${settings.autoMemory ? 'checked' : ''}><span>Auto-create memories from the transcript (even when no memory block is emitted)</span></label>
       <div class="glp-field-setting"><small>Summarizes the recent scene into a <b>[Memory]</b> entry for the relevant subject/location via a personaless side-generation (same summarizer as enrichment). Writes nothing on failure. Each auto memory is tagged <code>auto</code>. All triggers below require this master switch.</small></div>
       <label class="glp-row glp-auto-mem-sub"><input type="checkbox" id="glp-auto-mem-scene-exit" ${settings.autoMemoryOnSceneExit ? 'checked' : ''}><span>…when a subject leaves the scene (their time on-screen)</span></label>
@@ -759,12 +1007,15 @@ async function renderSettingsPanel() {
       <div class="glp-field-setting">
         <small><b>Semantic recall:</b> to retrieve memories by meaning (not just keywords), enable SillyTavern's built-in <b>Vector Storage → Vectorize All / World Info</b> against your Campaign Lorebook (the local <i>transformers</i> source works offline). Enrich memory content above for best results.</small>
       </div>
-      <div class="glp-section-label">Advanced</div>
+      </details>
+      <details class="glp-settings-group" open><summary>Advanced</summary>
       <div class="glp-two-col">
         <div class="glp-field-setting"><label>Scan depth</label><input  type="number" id="glp-scan-depth"  class="text_pole" min="1" max="20"  value="${settings.defaultScanDepth}"></div>
         <div class="glp-field-setting"><label>Lore order</label><input  type="number" id="glp-lore-order"  class="text_pole" min="1" max="999" value="${settings.loreOrder}"></div>
         <div class="glp-field-setting"><label>Rule order</label><input  type="number" id="glp-rule-order"  class="text_pole" min="1" max="999" value="${settings.ruleOrder}"></div>
       </div>
+      </details>
+      <details class="glp-settings-group"><summary>About &amp; changelog</summary>
       <div class="glp-info">
         <b>v0.0.19 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
         <b>v0.0.19:</b> the structured parsers are now <b>format-tolerant</b> — both the <b>[SYSTEM_DEF]</b> parser and the entity/char_create <b>schema:</b> parser accept the canonical indented form <i>and</i> the reshaped variants small models emit: pipe-prefixed inline rows (<code>attributes|Brawn|BRN|desc</code>, <code>field|hp|HP|bar|vitals</code>, <code>derived|hp = … -&gt; …</code>), keyless <code>Label | ABBR | desc</code> attribute rows (the machine key is derived from the label), and un-indented descriptor lines — so a produced card hydrates even when the model doesn't reproduce the exact indentation. A repeat <b>[CARD_BEGIN]</b> on an already-open draft is now a <b>rename</b>, not a reset — it keeps every accumulated field/entry (a stray re-open before finalize used to silently discard the whole card). Plus opt-in <b>autonomous memory capture</b> — auto-create <b>[Memory]</b> entries from the transcript even when the model emits no memory block: when a subject <b>leaves the scene</b> (their time on-screen), when the scene <b>location changes</b> (the place just left), <b>periodically</b> every N GM turns, and on <b>leaving the chat</b> (still-present subjects). Each is a personaless side-generation (same summarizer as enrichment), writes <i>nothing</i> on failure (no stub), is de-duplicated, and is tagged <code>auto</code>. All triggers default OFF, so the local text-completion path is unchanged unless opted in.<br>
@@ -778,6 +1029,7 @@ async function renderSettingsPanel() {
         <b>Detailed mechanics</b> surface on demand as keyword-triggered <b>[System Rule]</b> lorebook entries (keys derived from the def's own vocabulary); <b># commands</b> are derived from the def and reshapeable via its <code>commands:</code> section.<br>
         <b>Add a block type:</b> register tags in modules/state.js + add a handler in the relevant module + dispatch in index.js.
       </div>
+      </details>
     </div>
   </div>
 </div>`;
@@ -810,10 +1062,31 @@ async function renderSettingsPanel() {
     $('#glp-inject-ctx').on('change', function()    { getSettings().injectIntoContext = this.checked; injectCharacterContext(); save(); });
     $('#glp-inject-res').on('change', function()    { getSettings().injectResolution = this.checked; injectCharacterContext(); save(); });
     $('#glp-tiered-ctx').on('change', async function() { getSettings().tieredContext = this.checked; injectCharacterContext(); await rebuildPlayerLoreEntries(getSettings()); save(); });
+    // Re-persist the committed def so the always-on [System Definition] entry (digest)
+    // and the [System Rule] entries (constant flag) rebuild. Guard on an actually
+    // committed def so toggling in a system-less chat doesn't write a default entry.
+    const _rebuildRuleEntries = async (label) => {
+        const committed = SillyTavern.getContext().chatMetadata?.[MODULE_NAME]?.system_def;
+        if (!committed) return;
+        try { await saveSystemDef(committed, getSettings()); }
+        catch (e) { console.warn(`[${MODULE_NAME}] ${label} rebuild:`, e); }
+    };
+    $('#glp-rules-digest').on('change', async function() { getSettings().alwaysOnRulesDigest = this.checked; await _rebuildRuleEntries('rules-digest'); save(); });
+    $('#glp-full-rules').on('change', async function() { getSettings().fullRulesAlwaysOn = this.checked; await _rebuildRuleEntries('full-rules'); save(); });
     $('#glp-ctx-depth').on('change', function()  { getSettings().contextDepth     = parseInt(this.value) || 1; injectCharacterContext(); save(); });
     $('#glp-enrich-mem').on('change', function()    { getSettings().enrichMemories    = this.checked; save(); });
     $('#glp-enrich-window').on('change', function() { getSettings().enrichMemoryWindow = parseInt(this.value) || 10; save(); });
     $('#glp-use-tools').on('change', function()     { getSettings().useFunctionTools  = this.checked; save(); if (typeof syncGlpTools === 'function') syncGlpTools(); });
+    $('#glp-card-autoretry').on('change', function()     { getSettings().cardAutoRetry    = this.checked; save(); });
+    $('#glp-card-autoretry-max').on('change', function() { getSettings().cardAutoRetryMax = Math.max(1, Math.min(5, parseInt(this.value) || 2)); save(); });
+    $('#glp-extractor-mode').on('change', function()     { getSettings().stateExtractorMode = this.value; save(); });
+    $('#glp-extractor-profile').on('change', function()  { getSettings().stateExtractorProfileId = this.value; save(); });
+    const _refreshTele = () => { const el = document.getElementById('glp-telemetry-readout'); if (el && typeof glpTelemetrySummary === 'function') el.innerHTML = `<small>${glpTelemetrySummary()}</small>`; };
+    $('#glp-telemetry').on('change', function()          { getSettings().telemetryEnabled = this.checked; save(); _refreshTele(); });
+    $('#glp-telemetry-refresh').on('click', _refreshTele);
+    $('#glp-telemetry-reset').on('click', function()     { if (typeof glpResetTelemetry === 'function') glpResetTelemetry(SillyTavern.getContext().chatId); _refreshTele(); });
+    // Console probe: window.glpTelemetry.summary() / .cost() / .get() / .reset()
+    window.glpTelemetry = { summary: (c) => glpTelemetrySummary(c), cost: (c) => glpProjectCost(c), get: (c) => glpGetTelemetry(c), reset: (c) => glpResetTelemetry(c) };
     $('#glp-auto-mem').on('change', function()            { getSettings().autoMemory                 = this.checked; save(); });
     $('#glp-auto-mem-scene-exit').on('change', function() { getSettings().autoMemoryOnSceneExit      = this.checked; save(); });
     $('#glp-auto-mem-loc-change').on('change', function() { getSettings().autoMemoryOnLocationChange = this.checked; save(); });
