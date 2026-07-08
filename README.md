@@ -2,7 +2,7 @@
 
 A SillyTavern extension that automates campaign record-keeping for AI-run tabletop RPGs. The GM (or the Architect that designs a game) emits structured blocks at the end of messages; the extension parses them and maintains the ruleset, character/NPC/companion state, lorebooks, capabilities, world time, and more — automatically.
 
-**Version:** 0.0.19 (beta)
+**Version:** 0.0.20 (beta)
 **Requires:** SillyTavern 1.12.0+
 
 It is system-agnostic: a single `[SYSTEM_DEF]` block defines the ruleset (which subsystems exist, attributes, derived-stat formulas, progression model, optional classes, reputation/skill/needs settings, conflict resolution, and more). Player, NPC, Companion, and Creature share one stat-block engine via the unified `[ENTITY]` family; Boons/Titles/Passives/Evolution/Skills are one `[CAPABILITY]` concept with configurable progression. Levels, XP, classes, capabilities, reputation, needs, and the other subsystems are all opt-in — a classless, levelless, skill-based system is fully supported.
@@ -14,10 +14,10 @@ It is system-agnostic: a single `[SYSTEM_DEF]` block defines the ruleset (which 
 The extension is a single entry point (`index.js`) that loads `modules/` in order:
 
 ```
-state · utils · lorebook · system · schema · entity · scene ·
+state · utils · telemetry · lorebook · system · schema · entity · scene ·
 progression · inventory · capabilities · domain · lore · sheet · creation ·
 quests · reputation · events · currency · needs · header ·
-commands · panel · context
+commands · panel · context · tools
 ```
 
 Companions (loyalty / control / AP / legion) are a `type:` of the unified engine in `entity.js`; party/scene rosters live in `scene.js`; rank ladders + XP in `progression.js`; equipment slots / inventory model / item box in `inventory.js`; `currency.js` is pure wealth; the in-narrative status header is `header.js` (merged from the former standalone `gm-narrative-header` extension).
@@ -394,7 +394,7 @@ Realism guardrails that survive long context. Configured in the System Definitio
 - **Item** — `[ITEM_BEGIN]` / `[ITEM_UPDATE]`; condition labels derive from the system's `item_conditions`.
 - **Possessions** — equip/unequip via `[ENTITY_UPDATE]` (`equip: <slot>=<item>` / `unequip: <slot>`); `[ITEM_BOX_UPDATE]` (`add: <item> | <condition>` / `remove: <item>`) for the optional item box.
 - **Locations** — `[LOCATION_BEGIN]` (type/description/region, optional `instance`/`instance_type`) auto-creates a campaign-scoped `{campaign}-location-{slug}` history lorebook; `[LOCATION_MEMORY]` appends to it. `[RULE_BEGIN]`, `[EVENT_BEGIN]` are generic lore.
-- **Designer** — the Architect produces a GM card. One-shot `[CARD_OUTPUT]{json}[CARD_OUTPUT_END]` downloads a complete card, but the default is **chunked assembly** so small models can build it across messages: `[CARD_BEGIN]` (open buffer, with `name:`) → `[CARD_FIELD]` (set/append a `data` field — header `key:`/`append:`, blank line, then the verbatim value; the large `system_prompt` is built with `append: true`) → `[CARD_BOOK_ENTRY]` (append a `character_book` entry — header `keys:`/`comment:`/`constant:`/`order:`, blank line, content) → `[CARD_FINALIZE]` (the extension assembles the V2 card and downloads it). The buffer lives in `card_draft`; `CARD_FIELD`/`CARD_BOOK_ENTRY`/`CARD_FINALIZE` are ignored outside an active `[CARD_BEGIN]`. The draft **persists across the whole conversation** (no reset/timeout), so the Architect builds the card **incrementally** — opening `[CARD_BEGIN]` early and emitting one section per confirmed design stage, finalizing last. **Finalize is gated**: it is refused (with a toast, draft left open) until the card has a real **name** (from `[CARD_BEGIN] name:`, or derived from the `[System Definition]` entry — never blank or the designer character's name), `system_prompt`, `first_mes`, `post_history_instructions`, and at least one non-empty `character_book` entry — so a model that finalizes early or forgets the name can't produce a broken/mis-named card. On assembly, **exact-duplicate lore entries** (same comment or same key-set, e.g. a chatty model restating the protocol entry) are de-duped, keeping the richer copy; **empty-content entries are dropped** and very short ones logged as shallow. A `[CARD_FIELD]` whose `key:` isn't a recognized chara_card_v2 `data` field (e.g. a model that splits `system_prompt` into section-named fields like `entity_protocol` while continuing) is **folded into `system_prompt`** as a titled section rather than stranded. Block parsing also **tolerates markdown code fences** (small models often wrap output in ```` ``` ````) and a **missing blank line** between a block's header and its body. These keep a noisy small-model emission assembling into a valid card.
+- **Designer** — the Architect produces a GM card. One-shot `[CARD_OUTPUT]{json}[CARD_OUTPUT_END]` downloads a complete card, but the default is **chunked assembly** so small models can build it across messages: `[CARD_BEGIN]` (open buffer, with `name:`) → `[CARD_FIELD]` (set/append a `data` field — header `key:`/`append:`, blank line, then the verbatim value; the large `system_prompt` is built with `append: true`) → `[CARD_BOOK_ENTRY]` (append a `character_book` entry — header `keys:`/`comment:`/`constant:`/`order:`, blank line, content) → `[CARD_FINALIZE]` (the extension assembles the V2 card and downloads it). The buffer lives in `card_draft`; `CARD_FIELD`/`CARD_BOOK_ENTRY`/`CARD_FINALIZE` are ignored outside an active `[CARD_BEGIN]`. The draft **persists across the whole conversation** (no reset/timeout), so the Architect builds the card **incrementally** — opening `[CARD_BEGIN]` early and emitting one section per confirmed design stage, finalizing last. **Finalize is gated**: it is refused (with a toast, draft left open) until the card has a real **name** (from `[CARD_BEGIN] name:`, or derived from the `[System Definition]` entry — never blank or the designer character's name), `system_prompt`, `first_mes`, `post_history_instructions`, and at least one non-empty `character_book` entry — so a model that finalizes early or forgets the name can't produce a broken/mis-named card. On assembly, **exact-duplicate lore entries** (same comment or same key-set, e.g. a chatty model restating the protocol entry) are de-duped, keeping the richer copy; **empty-content entries are dropped** and very short ones logged as shallow. A `[CARD_FIELD]` whose `key:` isn't a recognized chara_card_v2 `data` field (e.g. a model that splits `system_prompt` into section-named fields like `entity_protocol` while continuing) is **folded into `system_prompt`** as a titled section rather than stranded. Block parsing also **tolerates markdown code fences** (small models often wrap output in ```` ``` ````) and a **missing blank line** between a block's header and its body. These keep a noisy small-model emission assembling into a valid card. When finalize is blocked, **card-assembly auto-retry** (below) can fetch the missing blocks automatically rather than waiting for a manual nudge.
 - **System definition loading** — the ruleset does not have to be emitted from the GM's `first_mes`. The extension hydrates the `[System Definition]` from (in order) the campaign lorebook entry's structured `extensions.system_def`, a `[SYSTEM_DEF]` **text block in that entry's content**, or a `[System Definition]` entry in the **active card's embedded `character_book`** ([system.js](SillyTavern/public/scripts/extensions/third-party/SillyTavern-GMLoreParser/modules/system.js) `loadSystemDefFromLorebook`). A `[HEADER_FORMAT]` block in the same content seeds the status header. So a produced GM card can carry its ruleset (and header format) in a constant `[System Definition]` lore entry and keep `first_mes` as pure in-world intro prose — the GM still *re-emitting* `[SYSTEM_DEF]` at runtime also works (self-populating).
 
 ---
@@ -454,6 +454,8 @@ Template tokens include `{name}` `{class}` `{rank}` `{field}` `{field_max}` `{fi
 ## Status panel
 
 A live, schema-driven panel renders above the chat input: identity + active title, grouped fields (bars/values/pools/lists), and collapsible sections for **scene** and **party** rosters, needs, capabilities (static + progressing), domains, quests, reputation, world events, currency, rank, companions, and equipment & inventory. During an active creation session it shows the creation step checklist instead. Disabled features and empty sections are hidden. The panel lives in a pinnable top-bar left drawer.
+
+Styling inherits SillyTavern's active theme via its `--SmartTheme*` variables. The panel's semantic state colors (need/loyalty ok·warn·crit, condition pills, the six reputation-tier colors) are centralized as **`--glp-*` CSS variables** with the built-in values as fallbacks, so a campaign or theme can recolor any of them from SillyTavern's **Custom CSS** without touching the extension, e.g. `:root { --glp-crit: #ff3355; --glp-rep-hostile: #cc2222; }`.
 
 ---
 
@@ -515,6 +517,20 @@ To help smaller models emit the protocol blocks consistently (rather than render
 
 Both are feature-gated (only enabled blocks appear) and rebuilt whenever the def loads/changes. Separately, on the parsing side the extension **tolerates block tags wrapped in markdown** — a line like `## [ENTITY_UPDATE_BEGIN]` or `**[ENTITY_UPDATE_END]**` is normalized back to the bare tag before extraction, so a lightly-malformed emission still parses.
 
+### Optional 2nd-pass state extractor (dual-model)
+
+By default GLP is **single-model**: the GM emits `[...]` blocks inside its own reply and the extension parses them. A forceful immersive System Prompt can pull a small model toward pure prose, though — it narrates and drops the blocks, so state stops updating. The **state extractor** is an opt-in second pass that fixes this: after the GM's message, a **personaless side-generation** reads the narration + the current state and emits the update blocks the prose implies, which then flow through the **same handlers** as a directly-emitted block. Set under **2nd-pass state extractor** in settings:
+
+- **Off** (default) — single-model; unchanged behavior.
+- **Fallback** — the extractor runs **only when the GM's own message contained no state block** (the failure case). When the GM did emit blocks the extractor is skipped, so there's no double-application.
+- **Always** — the extractor runs every GM turn. Pair this with a **pure-prose narrator** (a GM told *not* to emit blocks); if the narrator still emits blocks in *always* mode both passes apply and relative deltas (e.g. `hp: -3`) double up.
+
+**Extractor connection profile** (optional) routes the extraction pass through a chosen SillyTavern **Connection Profile** — so a cheap/fast model can do the mechanical extraction while your main model narrates. Blank uses the same model as the narrator (via `generateRaw`). The extraction prompt is assembled from the current state summary + the `[Block Formats]` cheat-sheet + the GM's latest message. Everything is opt-in and never throws — on any failure the turn proceeds as if the extractor weren't there.
+
+### Card-assembly auto-retry
+
+When a `[CARD_FINALIZE]` is **blocked** by the completeness gate (a missing `system_prompt`/`first_mes`/`post_history_instructions`, no lore entry, or no name), the extension can **auto-complete** the card instead of waiting for you to nudge the model: it fires a focused, personaless `generateRaw` asking for **only** the missing `[CARD_*]` blocks, harvests them through the normal card handlers, and re-attempts finalize — bounded by **Card auto-retry rounds** (default 2) and stopping early if a round makes no progress. Controlled by **Auto-complete card assembly** (default on); when it still can't complete, it falls back to the manual-nudge toast. It's a "validate → feed the missing pieces back → retry" loop layered on top of GLP's tolerant block parsers.
+
 ### Player-state durability
 
 Tracked character state (vitals, attributes, skills, inventory, factions, quests, party/scene, …) lives in the chat's metadata and is written into the chat file **immediately after every updating message** (an awaited save, not debounced) — so a refresh, tab close, or server restart resumes exactly where you left off. State is **per-chat** (each campaign is its own chat); the ruleset and header format re-hydrate from the card's `[System Definition]` entry when a chat loads. As belt-and-suspenders, the extension also flushes any unsaved change when the tab is hidden/closed and schedules a debounced backstop save, closing the sub-second window where an in-flight save could be interrupted.
@@ -523,7 +539,23 @@ Tracked character state (vitals, attributes, skills, inventory, factions, quests
 
 ## Always-on vs. keyword-triggered lorebook entries
 
-Only a handful of entries are **constant** (always in context): `[System Definition]` (terse summary), `[GM Directives]`, `[Scene]`, `[Party]`, and each NPC's **core** memories. Everything else is **keyword-triggered** so it loads only when relevant — the player's own `[Player:Skills]`/`[Player:Possessions]`/`[Player:Domains]` detail, items, locations, factions, quests, world events, capabilities, `[System Rule]` entries, episodic memories, and NPC state/progression. This keeps the always-on context small while the bulk of campaign lore (and the player's full kit) stays a keyword away.
+Only a handful of entries are **constant** (always in context): `[System Definition]` (summary + rules digest), `[GM Directives]`, `[Block Formats]`, `[Scene]`, `[Party]`, and each NPC's **core** memories. Everything else is **keyword-triggered** so it loads only when relevant — the player's own `[Player:Skills]`/`[Player:Possessions]`/`[Player:Domains]` detail, items, locations, factions, quests, world events, capabilities, `[System Rule]` entries, episodic memories, and NPC state/progression. This keeps the always-on context small while the bulk of campaign lore (and the player's full kit) stays a keyword away.
+
+### Always-on rules digest
+
+The detailed mechanics live in **keyword-triggered** `[System Rule]` entries (loaded only when the narrative uses the system's vocabulary). To keep the GM aware of the *shape* of every subsystem from turn 1 — before any keyword fires — the constant `[System Definition]` entry also carries a compact **rules digest**: one line per enabled subsystem with the vocabulary the GM needs to narrate correctly, e.g.
+
+```
+Rules digest (subsystem parameters):
+• Resolution: d20 + modifier vs. DC; DC Easy 10 / Medium 15 / Hard 20; crit Nat 20 success; nat 1 failure
+• Capabilities: boon, title, passive, trait, evolution, skill; skill→veridia_pp
+    veridia_pp (points_tiers): Novice < Apprentice < Adept < Expert < Master < Grandmaster < Saint < God
+• Reputation: Hostile < Cold < Neutral < Friendly < Allied < Sworn (0–100, init 50)
+• Ranks: F < E < D < C < B < A < S < SS < SSS
+• Needs: warn 30, critical 10
+```
+
+It's derived from the same `[SYSTEM_DEF]` fields the `[System Rule]` entries use, so the tier names / scales / mechanic stay in sync. Controlled by **Always-on rules digest** (default on). A separate **Full rules always-on** toggle (default off) promotes the *complete* `[System Rule]` entries to constant for users who prefer the full detail always in context rather than keyword-gated — richer but heavier.
 
 ---
 
@@ -532,7 +564,7 @@ Only a handful of entries are **constant** (always in context): `[System Definit
 | Lorebook | Created by | Contains |
 |---|---|---|
 | GM card embedded book | card author / Architect | Block-protocol reminder + system rules |
-| Campaign lorebook | extension | `[System Definition]` / `[GM Directives]` / `[Scene]` / `[Party]` (constant), `[Player:Skills]` / `[Player:Possessions]` / `[Player:Domains]` (keyword-triggered player detail), `[System Rule]` entries (keyword-triggered), NPC core/state/progression, creatures, factions+reputation, items, capabilities, quests, world events, locations, rules, events |
+| Campaign lorebook | extension | `[System Definition]` (summary + rules digest) / `[GM Directives]` / `[Block Formats]` / `[Scene]` / `[Party]` (constant), `[Player:Skills]` / `[Player:Possessions]` / `[Player:Domains]` (keyword-triggered player detail — now in the per-chat player book, see below), `[System Rule]` / `[Block Formats: More]` entries (keyword-triggered), NPC core/state/progression, creatures, factions+reputation, items, capabilities, quests, world events, locations, rules, events |
 | `{campaign}-npc-{slug}` / `{campaign}-location-{slug}` lorebooks | extension (auto) | Per-subject memories — core + episodic, **both keyword-triggered** on the subject's name (core ranks first). Names are **campaign-scoped** (prefixed with the campaign lorebook) so two campaigns that share a subject name don't cross-contaminate. Falls back to the legacy unscoped `npc-{slug}` / `location-{slug}` when no campaign lorebook is set. |
 
 > **Memory context economy.** A subject's memories enter context only when the subject is referenced — named in narration, or present via the constant `[Scene]`/`[Party]` entry (whose content names them → recursive scan). An off-screen NPC's core memories are **not** force-injected. Core memories are not `constant`; they simply rank above episodic when their subject triggers.
@@ -559,6 +591,8 @@ Only a handful of entries are **constant** (always in context): `[System Definit
 | Context injection depth | 1 | Messages from bottom where state injects |
 | Inject resolution | on | Prepend the system's conflict-resolution mechanic to context |
 | Tiered context | on | Lean always-on core + keyword-triggered `[Player:*]` detail entries (off = legacy monolithic injection of the whole sheet) |
+| Always-on rules digest | on | Append a compact per-subsystem digest (tier names / scales / mechanic / ladders) to the constant `[System Definition]` entry so the GM knows every rule's shape on turn 1 |
+| Full rules always-on | off | Promote the detailed `[System Rule]` entries to constant (always-on) instead of keyword-triggered — richer but heavier context |
 | Scan / lore / rule order | 4 / 100 / 50 | Lorebook scan depth and entry ordering |
 | **Narrative header** | on | Prepend an in-narrative status header to GM messages |
 | Use `[HEADER_FORMAT]` block | on | Prefer the captured format block over the manual format |
@@ -568,6 +602,13 @@ Only a handful of entries are **constant** (always in context): `[System Definit
 | **Enrich memory content** | off | Summarize the recent scene into `[Memory]` bodies via a quiet side-prompt (raw block text is the fallback) — see below |
 | Memory enrichment window | 10 | Trailing chat messages fed to the memory summarizer |
 | **Function tools** | off | Register state-change tools for chat-completion backends (inert on text-completion) — see below |
+| **Auto-complete card assembly** | on | On a blocked `[CARD_FINALIZE]`, headlessly fetch the missing `[CARD_*]` blocks and re-attempt (vs. waiting for a manual nudge) |
+| Card auto-retry rounds | 2 | Max headless auto-retry rounds per card draft before falling back to the manual-nudge toast |
+| **2nd-pass state extractor** | off | `off` / `fallback` (run only when the GM emitted no state block) / `always` (pure-prose narrator) — a personaless pass that emits state blocks from the GM's prose |
+| Extractor connection profile | — | Optional SillyTavern Connection Profile for the extraction pass (blank = same model as the narrator) |
+| **Measure side-generation token cost** | off | Accumulate per-chat token/cost for GLP's own model calls (extractor, memory summaries, card auto-retry) — see below |
+
+Settings are organized into collapsible groups (Panels · Narrative Header · Context & lore injection · Memory & tools · Autonomous memory capture · Advanced · About & changelog); the pop-out button (⧉ in the header) detaches the panel into a draggable float.
 
 ---
 
@@ -582,6 +623,14 @@ Three optional, independent enhancements. All default **off** and all keep the l
 **Semantic recall (Vector Storage).** gm-lore-parser writes standard World Info entries; SillyTavern's **built-in Vector Storage** can retrieve them *by meaning* rather than only by keyword. Enable Vector Storage and turn on **World-Info vectorization** against your Campaign Lorebook (the local `transformers` embedding source works offline). This complements — does not replace — keyword triggering, and works best with memory enrichment on (richer bodies embed better). No gm-lore-parser code owns retrieval; Vectors handles injection.
 
 **Function tools (chat-completion backends).** With *Function tools* on, the extension registers `glp_record_memory`, `glp_entity_update`, `glp_currency_update`, `glp_quest_update`, and `glp_reputation_update` via SillyTavern's function-calling API. A capable model can call these structured tools instead of emitting prose `[BLOCK]` tags — more reliable than hoping a small model formats a literal block. Each tool routes into the same handler the block path uses. **This is inert on text-completion backends** (SillyTavern only surfaces tools where function-calling is supported), so the local-model prose-block path is unchanged. Use the tool *or* the equivalent block in a reply, never both (delta updates would otherwise double-apply).
+
+---
+
+## Token telemetry (0.0.20)
+
+GLP is mostly single-model (the GM's own generation is SillyTavern's, not GLP's), but it makes its **own** model calls for side-tasks — the [2nd-pass state extractor](#optional-2nd-pass-state-extractor-dual-model), memory enrichment / autonomous-memory summaries, and [card-assembly auto-retry](#card-assembly-auto-retry). With **Measure side-generation token cost** on (default off), the extension accumulates the in/out token cost of those calls **per chat**, so you can see the overhead of the dual-model path — the "is it worth running the extractor on a paid API?" question. Estimates are char-based (~4 chars/token) unless the backend reports usage; each row notes which method was used.
+
+The **Memory & tools** settings group shows a readout (`N side-calls (extractor:2, memory:1) · in … / out … tok · ~$…`) with **Refresh** and **Reset** buttons, and a reference cost projection (defaults ≈ a cheap flash-tier extractor). Storage is in-memory and resets on reload — this is measurement scaffolding, not shipped state. Console probe: `window.glpTelemetry.summary()` / `.cost()` / `.get()` / `.reset()`.
 
 ---
 

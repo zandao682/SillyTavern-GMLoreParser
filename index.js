@@ -19,7 +19,7 @@
 // glpLoadModules (state.js, …) read MODULE_NAME / VERSION as globals, so expose
 // them on window. (MODULE_NAME is also the settings/chatMetadata key.)
 var MODULE_NAME = window.MODULE_NAME = 'gm-lore-parser';
-var VERSION     = window.VERSION     = '0.0.19';
+var VERSION     = window.VERSION     = '0.0.20';
 
 // Resolve our own install folder from this module's own URL so module loading
 // works regardless of the third-party folder name (a GitHub clone is typically
@@ -916,7 +916,7 @@ async function renderSettingsPanel() {
       <label class="glp-row"><input type="checkbox" id="glp-notify"    ${settings.notifyOnSave     ? 'checked' : ''}><span>Show toast notifications</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-scan-user" ${settings.scanUserMessages ? 'checked' : ''}><span>Scan user messages for lore blocks</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-intercept" ${settings.interceptCommands? 'checked' : ''}><span>Intercept # commands</span></label>
-      <details class="glp-settings-group" open><summary>Panels</summary>
+      <details class="glp-settings-group"><summary>Panels</summary>
       <label class="glp-row"><input type="checkbox" id="glp-show-panel"    ${settings.showStatusPanel  ? 'checked' : ''}><span>Character status panel</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-show-skills"   ${settings.showSkillPanel   ? 'checked' : ''}><span>Skill panel</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-show-domain"   ${settings.showDomainPanel  ? 'checked' : ''}><span>Domain panel</span></label>
@@ -929,7 +929,7 @@ async function renderSettingsPanel() {
       <label class="glp-row"><input type="checkbox" id="glp-show-scene"    ${settings.showScenePanel!==false ? 'checked' : ''}><span>Scene panel</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-show-party"    ${settings.showPartyPanel!==false ? 'checked' : ''}><span>Party panel</span></label>
       </details>
-      <details class="glp-settings-group" open><summary>Narrative Header</summary>
+      <details class="glp-settings-group"><summary>Narrative Header</summary>
       <label class="glp-row"><input type="checkbox" id="glp-hdr-enabled"   ${settings.headerEnabled!==false ? 'checked' : ''}><span>Prepend status header to GM messages</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-hdr-block"     ${settings.headerUseFormatBlock!==false ? 'checked' : ''}><span>Use [HEADER_FORMAT] block when present</span></label>
       <label class="glp-row"><input type="checkbox" id="glp-hdr-every"     ${settings.headerShowOnEveryMsg!==false ? 'checked' : ''}><span>Show on every GM message</span></label>
@@ -942,7 +942,7 @@ async function renderSettingsPanel() {
         <textarea id="glp-hdr-manual" class="text_pole" rows="2" placeholder="{name}  HP {hp}/{hp_max}  {conditions}  {time}">${settings.headerManualFormat || ''}</textarea>
       </div>
       </details>
-      <details class="glp-settings-group" open><summary>Context &amp; lore injection</summary>
+      <details class="glp-settings-group"><summary>Context &amp; lore injection</summary>
       <div class="glp-field-setting">
         <label for="glp-plot-lorebook">Plot Lorebook (optional)</label>
         <select id="glp-plot-lorebook" class="text_pole"><option value="">— auto (campaign-plot) —</option>${opts}</select>
@@ -958,7 +958,7 @@ async function renderSettingsPanel() {
         <input type="number" id="glp-ctx-depth" class="text_pole" min="0" max="20" value="${settings.contextDepth}">
       </div>
       </details>
-      <details class="glp-settings-group" open><summary>Memory &amp; tools</summary>
+      <details class="glp-settings-group"><summary>Memory &amp; tools</summary>
       <label class="glp-row"><input type="checkbox" id="glp-enrich-mem" ${settings.enrichMemories ? 'checked' : ''}><span>Enrich memory content (summarize the scene into memory blocks)</span></label>
       <div class="glp-field-setting">
         <label for="glp-enrich-window">Memory enrichment window (messages)</label>
@@ -993,7 +993,7 @@ async function renderSettingsPanel() {
         </div>
       </div>
       </details>
-      <details class="glp-settings-group" open><summary>Autonomous memory capture</summary>
+      <details class="glp-settings-group"><summary>Autonomous memory capture</summary>
       <label class="glp-row"><input type="checkbox" id="glp-auto-mem" ${settings.autoMemory ? 'checked' : ''}><span>Auto-create memories from the transcript (even when no memory block is emitted)</span></label>
       <div class="glp-field-setting"><small>Summarizes the recent scene into a <b>[Memory]</b> entry for the relevant subject/location via a personaless side-generation (same summarizer as enrichment). Writes nothing on failure. Each auto memory is tagged <code>auto</code>. All triggers below require this master switch.</small></div>
       <label class="glp-row glp-auto-mem-sub"><input type="checkbox" id="glp-auto-mem-scene-exit" ${settings.autoMemoryOnSceneExit ? 'checked' : ''}><span>…when a subject leaves the scene (their time on-screen)</span></label>
@@ -1008,7 +1008,7 @@ async function renderSettingsPanel() {
         <small><b>Semantic recall:</b> to retrieve memories by meaning (not just keywords), enable SillyTavern's built-in <b>Vector Storage → Vectorize All / World Info</b> against your Campaign Lorebook (the local <i>transformers</i> source works offline). Enrich memory content above for best results.</small>
       </div>
       </details>
-      <details class="glp-settings-group" open><summary>Advanced</summary>
+      <details class="glp-settings-group"><summary>Advanced</summary>
       <div class="glp-two-col">
         <div class="glp-field-setting"><label>Scan depth</label><input  type="number" id="glp-scan-depth"  class="text_pole" min="1" max="20"  value="${settings.defaultScanDepth}"></div>
         <div class="glp-field-setting"><label>Lore order</label><input  type="number" id="glp-lore-order"  class="text_pole" min="1" max="999" value="${settings.loreOrder}"></div>
@@ -1017,7 +1017,8 @@ async function renderSettingsPanel() {
       </details>
       <details class="glp-settings-group"><summary>About &amp; changelog</summary>
       <div class="glp-info">
-        <b>v0.0.19 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
+        <b>v0.0.20 (beta) — modular build.</b> A lorebook-hosted <b>[SYSTEM_DEF]</b> declares the ruleset; a unified <b>[ENTITY]</b> engine drives player/NPC/companion/creature; <b>[CAPABILITY]</b> unifies boons/titles/passives/traits/evolution/skills.<br>
+        <b>v0.0.20:</b> the constant <b>[System Definition]</b> entry now carries an always-on <b>rules digest</b> (tier names/scales/mechanic per subsystem) so the GM knows every rule's shape on turn 1 before any keyword fires (toggle <b>Always-on rules digest</b>; <b>Full rules always-on</b> promotes the detailed [System Rule] entries to constant). An optional <b>2nd-pass state extractor</b> (off / fallback / always) reads the GM's prose and emits the state blocks itself — fixing an immersive narrator that drops blocks — optionally on a separate <b>connection profile</b>. <b>Card-assembly auto-retry</b> headlessly fetches missing <b>[CARD_*]</b> blocks when a finalize is gate-blocked. Settings are now <b>collapsible groups</b> and panel state-colors are themable <b>--glp-*</b> CSS variables. Opt-in <b>token telemetry</b> measures the per-chat cost of GLP's own side-generations (extractor/memory/card-retry). All new behavior defaults OFF/unchanged.<br>
         <b>v0.0.19:</b> the structured parsers are now <b>format-tolerant</b> — both the <b>[SYSTEM_DEF]</b> parser and the entity/char_create <b>schema:</b> parser accept the canonical indented form <i>and</i> the reshaped variants small models emit: pipe-prefixed inline rows (<code>attributes|Brawn|BRN|desc</code>, <code>field|hp|HP|bar|vitals</code>, <code>derived|hp = … -&gt; …</code>), keyless <code>Label | ABBR | desc</code> attribute rows (the machine key is derived from the label), and un-indented descriptor lines — so a produced card hydrates even when the model doesn't reproduce the exact indentation. A repeat <b>[CARD_BEGIN]</b> on an already-open draft is now a <b>rename</b>, not a reset — it keeps every accumulated field/entry (a stray re-open before finalize used to silently discard the whole card). Plus opt-in <b>autonomous memory capture</b> — auto-create <b>[Memory]</b> entries from the transcript even when the model emits no memory block: when a subject <b>leaves the scene</b> (their time on-screen), when the scene <b>location changes</b> (the place just left), <b>periodically</b> every N GM turns, and on <b>leaving the chat</b> (still-present subjects). Each is a personaless side-generation (same summarizer as enrichment), writes <i>nothing</i> on failure (no stub), is de-duplicated, and is tagged <code>auto</code>. All triggers default OFF, so the local text-completion path is unchanged unless opted in.<br>
         <b>v0.0.18:</b> character-creation panel now groups the finalized sheet correctly (HP in <i>vitals</i>, attributes in <i>attributes</i>) without needing a refresh, and reloads correct any previously mis-grouped fields; the tiered <b>[Player:*]</b> projections moved into a dedicated <b>per-chat player lorebook</b> (<code>&lt;campaign&gt;-player-&lt;chat&gt;</code>) so two chats sharing a campaign book can't overwrite each other's player state (legacy entries auto-pruned from the campaign book); and <b>every lorebook-backed panel row</b> (quests, item box, equipment, capabilities, factions, world events, companions) is now <b>click-to-view</b> — opening its lorebook entry in a popup.<br>
         <b>v0.0.17:</b> opt-in <b>memory enrichment</b> (summarize the recent scene into [Memory] bodies via a personaless side-prompt; raw text is the fallback); all generated campaign lorebooks (campaign, plot, per-subject) are now <b>auto-linked to the active chat</b> so their entries are pulled by keyword World Info <i>and</i> Vector Storage; a <b>Semantic recall</b> note for pairing with built-in Vector Storage; and opt-in <b>function tools</b> for state changes on chat-completion backends (inert on text-completion — the prose-block path is unchanged).<br>

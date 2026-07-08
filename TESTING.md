@@ -14,7 +14,7 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 
 | # | Step | Verify |
 |---|------|--------|
-| P1 | Install gm-lore-parser under `…/extensions/third-party/`, reload ST. **Disable/remove the standalone gm-narrative-header** if present. | Console: `[gm-lore-parser] v0.0.17 loaded…` listing modules incl. `scene, header`; its drawer appears under Extensions; no `[gm-narrative-header]` active-load line. |
+| P1 | Install gm-lore-parser under `…/extensions/third-party/`, reload ST. **Disable/remove the standalone gm-narrative-header** if present. | Console: `[gm-lore-parser] v0.0.20 loaded…` listing modules incl. `telemetry, scene, header`; its drawer appears under Extensions; no `[gm-narrative-header]` active-load line. |
 | P2 | World Info → create lorebook **`harness-campaign`** (empty). | Appears in World Info. |
 | P3 | gm-lore-parser settings → **Campaign Lorebook = `harness-campaign`**. | Persists across reload. |
 | P4 | gm-lore-parser settings: Enabled ✔, Hide raw blocks ✔, Toasts ✔, Intercept # commands ✔, Inject into context ✔, Inject resolution ✔, all panels ✔, Scan user messages ✘. | Checkboxes match. |
@@ -378,6 +378,12 @@ Every lorebook-backed panel row is clickable via one delegated handler on `.glp-
 | Memory enrichment (0.0.17 setting) | ENRICH-01…ENRICH-04 |
 | Semantic recall (Vector Storage config) | VEC-01 |
 | Function tools (chat-completion backends) | TOOL-01…TOOL-04 |
+| Autonomous memory capture (0.0.19) | AUTO-MEM-SCENE-01, AUTO-MEM-LOC-01, AUTO-MEM-PERIODIC-01, AUTO-MEM-AWAY-01, AUTO-MEM-OFF-01, AUTO-MEM-MIN-01, AUTO-MEM-EMPTY-01, AUTO-MEM-DEDUP-01, AUTO-MEM-PERSONA-01 |
+| Always-on rules digest / full-rules toggle (0.0.20) | DIGEST-01…DIGEST-03 |
+| 2nd-pass state extractor (off/fallback/always + profile + guard) | EXTRACT-01…EXTRACT-04, EXTRACT-GUARD-01 |
+| Card-assembly auto-retry | CARDRETRY-01…CARDRETRY-03 |
+| Token telemetry | TELEM-01…TELEM-03 |
+| Settings pop-out / collapsible groups / `--glp-*` theming | POPOUT-01, POPOUT-02, THEME-01 |
 
 **Commands → test IDs:** `#status/#character`→CMD-01; `#vitals`→TIM-01; `#skills`→CAP-PRG-01; `#inventory/#bag`→ENT-01; `#equipment`→POS-01; `#itembox`→POS-BOX-01; `#domain`→DOM-01; `#time`→TIM-01; `#quests`→QST-01; `#rep/#reputation`→REP-02; `#factions`→REP-01; `#events`→EVT-01; `#locations`→LOC-01; `#currency/#wallet`→ECO-01; `#rank`→PRG-01; `#companions`→`emit: entity companion`+`#companions`; `#legion/#hierarchy`→REG-08; `#boons`→CAP-01; `#titles`→CAP-02; `#abilities`→CAP-EVO-01; `#needs`→NDS-01; `#inspect`→INS-01; `#system/#ruleset`→SD-01; `#help`→CMD-help-01; custom/alias→CMD-02; `#party`→CMD-PTY-01; `#scene/#present`→CMD-PTY-01. (`#<category>s` commands are def-derived — see CAP-01/02.)
 
@@ -404,6 +410,59 @@ Opt-in triggers that auto-create `[Memory]` entries from the transcript even whe
 | AUTO-MEM-PERSONA-01 | Active card is the block-emitting harness; `autoMemory` ON | any trigger | The written `content` is clean prose, **not** a re-emitted `[…_BEGIN]` block (guaranteed by the personaless `generateRaw` path + block-tag strip — same guard as ENRICH-05). |
 
 > These reuse the enrichment summarizer, so ENRICH's caveats apply: quality depends on the backend model, and each capture is one extra short generation — hence all triggers default off and the min-message guard fires first. Auto and model-emitted memories can coexist for the same beat; `extensions.auto` + content de-dup mark/limit overlap (documented, like the tool-vs-block guidance).
+
+---
+
+## 8e. v0.0.20 — rules digest · 2nd-pass extractor · card auto-retry · telemetry · settings pop-out
+
+All new behavior defaults **off/unchanged**. The extractor/card-retry/telemetry cases need a connected model (local gemma is fine); the digest and pop-out cases are deterministic.
+
+### Always-on rules digest (`DIGEST-*`) — `alwaysOnRulesDigest` / `fullRulesAlwaysOn`
+Derived in `buildSystemRulesDigest` (`modules/system.js`), appended to the constant `[System Definition]` entry in `saveSystemDef`.
+
+| ID | Precondition | Action | Expected |
+|----|----|----|----|
+| DIGEST-01 | **Always-on rules digest ON** (default) | `emit: system_def default`, inspect the `[System Definition]` entry | Content ends with a `Rules digest (subsystem parameters):` block: a `Resolution:` line (mechanic + DC scale + crit), `Capabilities:` categories + `skill→veridia_pp` with the `veridia_pp` tier ladder (`Novice < … < God`), `Reputation: Hostile < … < Sworn (0–100, init 50)`, `Ranks: F < … < SSS`, `Needs: warn 30, critical 10`. **Verified live 0.0.20.** |
+| DIGEST-02 | DIGEST-01 | toggle **Always-on rules digest OFF**, re-save the def (toggle fires a re-commit) | The `[System Definition]` entry reverts to the terse summary only (no `Rules digest` block); the keyword-triggered `[System Rule]` entries are unchanged. |
+| DIGEST-03 | SD-01 | toggle **Full rules always-on ON**, re-save | The detailed `[System Rule]` entries (Resolution/Reputation/…) become `constant:true` (always-on); toggling it OFF and re-saving returns them to `constant:false` (keyword-triggered). |
+
+### 2nd-pass state extractor (`EXTRACT-*`) — `stateExtractorMode` / `stateExtractorProfileId`
+`runStateExtractorPass` + `runStateExtraction` (`index.js`); output flows through the shared `applyStateBlocks`. Console marker on a successful pass: `2nd-pass extractor applied blocks (sheet:…, lore:…)`.
+
+| ID | Precondition | Action | Expected |
+|----|----|----|----|
+| EXTRACT-01 | **2nd-pass state extractor = Off** (default) | ordinary play | No extractor pass ever runs (no side generation, no console marker); single-model behavior is byte-for-byte unchanged. |
+| EXTRACT-02 | mode = **Always**; player exists (`emit: entity player`, HP known) | send a GM turn whose prose describes a state change with **no block** (e.g. ask the narrator: "prose only, no blocks: Kael takes 8 damage") | The extractor runs (console marker), reads the prose + current state, emits an `[ENTITY_UPDATE]`, and HP drops accordingly. **Verified live 0.0.20** (extractor recovered `hp` from prose). ⚠ In *always* mode, if the narrator ALSO emits a block the delta double-applies — *always* is for a **pure-prose narrator**. |
+| EXTRACT-03 | mode = **Fallback** | (a) a GM turn that **emits** a state block; (b) a GM turn that emits **only prose** | (a) extractor is **skipped** — narrator already covered it (no console marker, single application, no double-apply); (b) extractor **runs** and supplies the block from prose. **Verified live 0.0.20** (fallback correctly skipped on a block-bearing turn: HP moved once, no marker). |
+| EXTRACT-04 | mode = fallback/always; **Extractor connection profile** set to a valid SillyTavern Connection Profile | trigger a pass | The extraction routes through `ConnectionManagerRequestService.sendRequest` (silent, no UI flicker); blank profile uses the narrator's model via `generateRaw`. Falls back to `generateRaw` if the service is unavailable; never throws. |
+| EXTRACT-GUARD-01 | mode = always; force/leave `window.__glpStateExtracting = true` (simulating a prior hung extraction) | send a fresh GM turn | The next turn **clears the guard at entry** (`onMessageReceived`) so the extractor is not permanently wedged — it runs normally. (Self-heal fix; the guard relying only on `finally` could otherwise stick true if a `generateRaw` hung.) |
+
+### Card-assembly auto-retry (`CARDRETRY-*`) — `cardAutoRetry` / `cardAutoRetryMax`
+`autoCompleteCard` (`index.js`); shares the `_cardMissing` gate helper with `applyCardFinalize`.
+
+| ID | Precondition | Action | Expected |
+|----|----|----|----|
+| CARDRETRY-01 | **Auto-complete card assembly ON** (default); active draft with `system_prompt` only (no first_mes/post_history/entry/name) | `emit: card_finalize` | Gate blocks, then a **headless `generateRaw`** fires for ONLY the missing blocks (console `card auto-retry N/M: applied K block(s)…`); if the model supplies them the card **finalizes and downloads**. Bounded by **Card auto-retry rounds** (default 2); stops early if a round applies nothing, then falls back to the manual-nudge toast. |
+| CARDRETRY-02 | **Auto-complete card assembly OFF**; same blocked draft | `emit: card_finalize` | Legacy behavior — gate blocks with the "still missing…" toast; **no** auto-retry generation fires; draft stays open for a manual nudge. |
+| CARDRETRY-03 | a draft that exhausted its retry budget | a **fresh** `emit: card_begin` (new card) | `draft.auto_retries` resets to 0 — the new card gets a full retry budget. |
+
+### Token telemetry (`TELEM-*`) — `telemetryEnabled`
+`modules/telemetry.js` (`glpRecordPass`/`glpProjectCost`/`glpTelemetrySummary`); instrumented at the extractor, memory enrich/auto-memory, and card-retry `generateRaw` sites. Probe: `window.glpTelemetry`.
+
+| ID | Precondition | Action | Expected |
+|----|----|----|----|
+| TELEM-01 | **Measure side-generation token cost OFF** (default) | run a side-generation (e.g. an extractor turn) | `glpRecordPass` is a **no-op**; `window.glpTelemetry.summary()` = "No side-generations recorded yet."; the settings readout shows the off message. |
+| TELEM-02 | telemetry **ON**; extractor Always (or Enrich on) | run one side-generation turn, then click **Refresh** (or call `window.glpTelemetry.summary()`) | Readout shows `N side-call(s) (extractor:…, memory:…) · in … / out … tok · ~$… (~$…/call)`. **Verified live 0.0.20** — a real extractor turn recorded `1 side-call (extractor:1) · in 954 / out 34 tok`. |
+| TELEM-03 | TELEM-02 has data | click **Reset** (or `window.glpTelemetry.reset()`); also record a pass with backend-reported tokens | Reset returns the readout to empty; per-chat buckets are isolated (a different chatId accumulates separately); a backend usage figure overrides the char-based (~4 chars/token) estimate (`method:'backend'` vs `'estimate'`). |
+
+### Settings organization & pop-out (`POPOUT-*`) — collapsible groups + the `--glp-*` themable palette
+Settings render as `<details class="glp-settings-group">` groups; the pop-out moves `.inline-drawer-content` into a floating panel.
+
+| ID | Precondition | Action | Expected |
+|----|----|----|----|
+| POPOUT-01 | GLP settings drawer **open** in Extensions | click the pop-out button (⧉) in the settings header | The settings detach into a **draggable float that shows all controls** — regression guard: the 0.0.20 collapsible `<details>` groups must NOT collapse the content to 0 width in the flex-row float (the group is `display:block`, and the popped content is `flex:1;min-width:0`). Close (×) returns them to the drawer. **Verified live 0.0.20** (620×788 content, all 33 rows / 7 groups visible, fits the 640px panel). |
+| POPOUT-02 | settings drawer open | inspect the settings body | Seven collapsible groups render — **Panels · Narrative Header · Context & lore injection · Memory & tools · Autonomous memory capture · Advanced · About & changelog**. All groups default **collapsed** (only the master toggles above them show until expanded); clicking a group summary folds/unfolds its controls. |
+| THEME-01 | any campaign with needs/reputation state | add `:root { --glp-crit:#ff3355; --glp-rep-hostile:#cc2222; }` to ST **Custom CSS** | The critical-need bar and Hostile reputation recolor to the overrides; unset `--glp-*` variables render the built-in fallbacks (panel colors are centralized in `style.css` as `var(--glp-…, <default>)`). |
 
 ---
 
