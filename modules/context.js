@@ -120,6 +120,9 @@ async function rebuildPlayerLoreEntries(settings) {
             ...caps.map(c => c.name),
         ];
         await _upsertPlayerEntry(settings, '[Player:Skills]', keys, buildCapabilityContextString(state.capabilities || {}), 'PLAYER_SKILLS');
+        // Self-heal: ensure each capability also has its clickable [Capability] entry
+        // (backfills any that were created before the campaign lorebook was set / lost).
+        await backfillCapabilityEntries(settings);
     }
 
     // [Player:Possessions] — the item lists (possession schema fields) + equipment/load +

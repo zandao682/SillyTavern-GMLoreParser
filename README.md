@@ -472,7 +472,7 @@ Title: {active_title}   Coin: {currency}
 [HEADER_FORMAT_END]
 ```
 
-Tokens resolve against the live character state. **A token with no data resolves to nothing** (never a literal `{token}`), a line whose tokens *all* resolve empty is dropped, and leftover artifacts (orphan `/`, empty `()`, stray separators) are tidied — so one-stat-per-line formats hide cleanly.
+Tokens resolve against the live character state. **A token with no data resolves to nothing** (never a literal `{token}`) — this applies uniformly, including empty capability/roster lists (`{boons}`, `{abilities}`, `{titles}`, `{conditions}`, `{party}`, `{scene}`): they drop their segment rather than printing an empty-label placeholder, so the header only shows what the character actually has. A line whose tokens *all* resolve empty is dropped, and leftover artifacts (orphan `/`, empty `()`, stray separators) are tidied — so one-stat-per-line formats hide cleanly.
 
 | Token | Resolves to |
 |---|---|
@@ -490,6 +490,8 @@ Tokens resolve against the live character state. **A token with no data resolves
 | `{<field>_max}` `{<field>_regen}` `{<field>_pct}` | A field's max / regen-per-min / percent-of-max |
 
 Header settings: enable/disable, prefer the `[HEADER_FORMAT]` block vs. the manual format, the separator string between header and narrative, and whether to render on every message or only when a fresh format block arrives.
+
+The raw `[HEADER_FORMAT]` spec block **respects the Hide-blocks setting** like any other block: with hide-blocks on it's stripped (the rendered header replaces it); with hide-blocks off the raw `[HEADER_FORMAT]` block stays visible in the message below the rendered header.
 
 ---
 
@@ -515,7 +517,7 @@ To help smaller models emit the protocol blocks consistently (rather than render
 - A compact **constant `[Block Formats]`** entry with the workhorse templates (`[ENTITY_UPDATE]`, `[ENTITY_EVENT]`, `[WORLD_TIME]`) always in context as a copy target.
 - A **keyword-triggered `[Block Formats: More]`** entry with templates for the *other enabled* feature-blocks (`[CAPABILITY_UPDATE]`, `[REPUTATION_UPDATE]`, `[CURRENCY_UPDATE]`, `[NEEDS_UPDATE]`, `[PARTY_UPDATE]`/`[SCENE_UPDATE]`, `[ITEM_BOX_UPDATE]`, `[QUEST_UPDATE]`, `[RANK_CHANGE]`, `[ENTITY_MEMORY]`, …), surfaced on emission-intent keywords.
 
-Both are feature-gated (only enabled blocks appear) and rebuilt whenever the def loads/changes. Separately, on the parsing side the extension **tolerates block tags wrapped in markdown** — a line like `## [ENTITY_UPDATE_BEGIN]` or `**[ENTITY_UPDATE_END]**` is normalized back to the bare tag before extraction, so a lightly-malformed emission still parses.
+Both are feature-gated (only enabled blocks appear) and rebuilt whenever the def loads/changes. Separately, on the parsing side the extension **tolerates malformed block tags**: a tag wrapped in markdown (`## [ENTITY_UPDATE_BEGIN]`, `**[ENTITY_UPDATE_END]**`) is normalized back to the bare tag, and an **XML-style closer** — a small model ending a block with `[/SCENE_UPDATE_BEGIN]` (or `[/SCENE_UPDATE_END]`) instead of the required `[SCENE_UPDATE_END]` — is rewritten to the proper `_END` tag, so the block still extracts. (This one matters: a wrong closer silently drops the *entire* block, so it commonly broke party/scene updates.)
 
 ### Optional 2nd-pass state extractor (dual-model)
 

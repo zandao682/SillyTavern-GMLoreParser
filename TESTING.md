@@ -76,6 +76,7 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 | CAP-PRG-01 | SD-01 | `emit: capability skill "Swordsmanship"` then `emit: capability_update "Swordsmanship" points:250` | `#skills` shows `Swordsmanship: Novice/Apprentice Lv… \| PP …/… \| Score …` (veridia_pp profile); tier/level toasts; branch "Riposte" unlock toast. `{skill_score:Swordsmanship}` resolves to `prog.score`. |
 | CAP-PRG-02 | SD-PROG-01 (custom_progression def) | `emit: capability_update "Tracking" level:3` | Flat-counter advance to Lv3, no tiers; panel/`#skills` show the level without a PP bar. |
 | CAP-LAZY-01 | SD-01 | `emit: capability_update "Alchemy" points:120` (no prior declaration) | Capability lazily created under the first progressing category and advanced; appears in `#skills`. |
+| CAP-BACKFILL-01 (0.0.20) | a capability exists in state but its `[Capability] <name>` lorebook entry is **missing** (e.g. it was created before the Campaign Lorebook was set, or the entry was deleted) | trigger a player rebuild (any capability change / chat reload) | `backfillCapabilityEntries` (called from `rebuildPlayerLoreEntries`) recreates the missing `[Capability] <name>` entry — panel click-to-view finds it again. Only missing entries are written (present ones untouched). The narrator already saw the capability via the bundled `[Player:Skills]` entry regardless. **Verified live 0.0.20.** |
 
 ### 4.6 Progression & economy
 | ID | Precondition | Action | Expected |
@@ -181,6 +182,7 @@ Exercise every block type, `#` command, System-Definition section, status-panel 
 | INCR-01 | `card_begin` then `card_field`/`card_book_entry` blocks spread across **several separate messages** with unrelated narration between them | (final) `card_finalize` | The draft accumulates across all messages (persists in `chatMetadata`); the card assembles normally — incremental, non-consecutive emission works. |
 | BLKFMT-01 | a System Definition loaded (campaign lorebook set) | inspect the campaign lorebook entries | A **constant** `[Block Formats]` entry exists (content has a literal `[ENTITY_UPDATE_BEGIN]`), and a keyword-triggered `[Block Formats: More]` entry exists whose templates are **feature-gated** (e.g. a `[CURRENCY_UPDATE]` template only when `currency` is on; `[ITEM_BOX_UPDATE]` only when `inventory.item_box`). Turning a feature off and reloading prunes its template. |
 | TAG-NORM-01 | any | `emit: block_formats_heading` (a block tag wrapped as `## [ENTITY_UPDATE_BEGIN]` / `**[ENTITY_UPDATE_END]**`) | The markdown markers are normalized away before extraction; the `[ENTITY_UPDATE]` parses and the player's HP/conditions change (the heading-wrapped tag is NOT ignored). |
+| TAG-NORM-02 (0.0.20) | a message whose block is closed with an **XML-style closer** — `[SCENE_UPDATE_BEGIN]…[/SCENE_UPDATE_BEGIN]` (or `[/SCENE_UPDATE_END]`) instead of `[SCENE_UPDATE_END]` | process the message | `_normalizeBlockTags` rewrites `[/X_BEGIN]`/`[/X_END]` → `[X_END]`, so `extractBlocks` finds a complete block and the scene/party (or any) update **applies** — previously the wrong closer silently dropped the whole block. Correct tags are untouched (no regression). **Verified live 0.0.20** (`[/PARTY_UPDATE_BEGIN]` → block extracted). |
 | STATE-FLUSH-01 | a state mutation just applied (`window.__glpStateDirty` may be set mid-save) | dispatch a `pagehide` event (or set `visibilityState=hidden`) | `flushCharStateIfDirty()` fires a `saveMetadata()` if dirty; no error. Normal case: dirty is already false (per-message save flushed it), so it's a no-op — confirm no exception. |
 | BAR-DELTA-01 | player with a `bar` field `hp` = 20 (max 20) | `[ENTITY_UPDATE] type: player, hp: -3` then later `hp: +5` then `hp: 12` | First → 17 (relative −3, floored at 0); then → 20 (relative +5, capped at max 20); then → 12 (bare number = absolute). A `value`-type field stays full-replacement (no delta). |
 
@@ -250,6 +252,8 @@ The header is built into gm-lore-parser (`modules/header.js`). Settings live in 
 | HDR-05 | Player + skills + faction + needs + party/scene exist | `emit: header_format full` | Every present token resolves to a live value (or empty → its line/segment drops); `{inventory_max}` uses `system_def.inventory.capacity` when set; `{party}`/`{scene}` resolve to member names. |
 | HDR-06 | Use-`[HEADER_FORMAT]`-block OFF, manual format set | GM message | Manual format used instead of the captured block. |
 | HDR-DUP-01 | Standalone gm-narrative-header **disabled** | `emit: header_format basic` then `emit: noop` | Header prepended exactly **once** (no double header). With the standalone still enabled it double-prepends — that confirms it must be removed. |
+| HDR-EMPTY-01 (0.0.20) | a **full** format referencing capability/roster lists, on a character with **no** boons/abilities/titles/party (e.g. `Title: {active_title}   Boons: {boons}   Abilities: {abilities}` and `Party: {party}`) | render the header | Empty capability/roster tokens **drop their segment** — no `Boons: None` / `Party: None` placeholder; a line whose tokens are all empty is dropped entirely. `resolveHeaderToken('boons', <emptyState>) === ''` (not `'None'`). **Verified live 0.0.20.** |
+| HDR-HIDE-01 (0.0.20) | header on; a `[HEADER_FORMAT]` block emitted | toggle **Hide blocks** off, then on | Off → the raw `[HEADER_FORMAT_BEGIN]…[END]` block **stays visible** in the message (below the rendered header + separator), like any other raw block. On → it's **stripped** (only the rendered header shows). **Verified live 0.0.20** via `applyNarrativeHeader`. |
 
 ---
 
@@ -372,7 +376,8 @@ Every lorebook-backed panel row is clickable via one delegated handler on `.glp-
 | Card naming gate (block empty/designer name; derive from [System Definition]) | NAME-GATE-01, NAME-GATE-02, NAME-GATE-03 |
 | Incremental assembly across non-consecutive messages | INCR-01 |
 | In-context block templates ([Block Formats], feature-gated) | BLKFMT-01 |
-| Tolerant tag parse (markdown-wrapped block tag) | TAG-NORM-01 |
+| Tolerant tag parse (markdown-wrapped tag; XML-style `[/X_BEGIN]` closer) | TAG-NORM-01, TAG-NORM-02 |
+| Capability entry self-heal (backfill missing `[Capability]`) | CAP-BACKFILL-01 |
 | State flush on tab hide/close | STATE-FLUSH-01 |
 | HEADER_FORMAT | HDR-01…HDR-06, HDR-DUP-01 |
 | Memory enrichment (0.0.17 setting) | ENRICH-01…ENRICH-04 |

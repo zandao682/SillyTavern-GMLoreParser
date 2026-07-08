@@ -38,7 +38,8 @@ function resolveHeaderToken(token, charState) {
     const caps       = (charState.capabilities && typeof charState.capabilities === 'object')
         ? Object.values(charState.capabilities).filter(c => (c.entity_slug || 'player') === 'player') : [];
     const exCat      = def?.capabilities?.exclusive_category || 'title';
-    const emptyLabel = def?.presentation?.empty_label || 'None';
+    // Header tokens ALWAYS resolve empty data to '' (the segment/line then drops) —
+    // the header never shows an empty-label placeholder, for consistent degradation.
 
     if (token === 'name')       return charState.name       || '';
     if (token === 'class')      return charState.class_      || '';
@@ -47,7 +48,7 @@ function resolveHeaderToken(token, charState) {
     if (token === 'time' || token === 'date') return charState.world_time?.display || '';
 
     if (token === 'conditions')
-        return (Array.isArray(values.conditions) && values.conditions.length) ? values.conditions.join(', ') : emptyLabel;
+        return (Array.isArray(values.conditions) && values.conditions.length) ? values.conditions.join(', ') : '';
     if (token === 'inventory_count')
         return Array.isArray(values.inventory) ? values.inventory.length : 0;
     if (token === 'inventory_max')
@@ -58,15 +59,15 @@ function resolveHeaderToken(token, charState) {
         return t ? t.name : '';
     }
     if (token === 'titles')
-        return caps.filter(c => c.category === exCat).map(c => c.name).join(', ') || emptyLabel;
+        return caps.filter(c => c.category === exCat).map(c => c.name).join(', ') || '';
     if (token === 'boons')
-        return caps.filter(c => c.category === 'boon').map(c => c.name).join(', ') || emptyLabel;
+        return caps.filter(c => c.category === 'boon').map(c => c.name).join(', ') || '';
     if (token === 'abilities')
-        return caps.filter(c => c.category !== exCat && !_hdrCapProgressing(c, def)).map(c => c.name).join(', ') || emptyLabel;
+        return caps.filter(c => c.category !== exCat && !_hdrCapProgressing(c, def)).map(c => c.name).join(', ') || '';
     if (token === 'party')
-        return Object.values(charState.party || {}).map(m => m.name).join(', ') || emptyLabel;
+        return Object.values(charState.party || {}).map(m => m.name).join(', ') || '';
     if (token === 'scene')
-        return Object.values(charState.scene || {}).map(m => m.name).join(', ') || emptyLabel;
+        return Object.values(charState.scene || {}).map(m => m.name).join(', ') || '';
 
     if (token === 'currency') {
         const c = charState.currency || {};
@@ -205,8 +206,14 @@ function applyNarrativeHeader(messageId) {
     if (!settings.headerShowOnEveryMsg && !message._glpHadHeaderBlock) return;
 
     let body = message.mes || '';
-    const blk = extractHeaderFormat(body);          // strip a still-present block (hideBlocks off)
-    if (blk) body = stripHeaderBlock(body, blk.fullMatch);
+    // Strip the raw [HEADER_FORMAT] spec ONLY when hide-blocks is on (consistent with
+    // every other block). With hide-blocks off it stays visible like any raw block —
+    // you'll see the rendered header AND the raw format spec below it. (When hide-blocks
+    // is on, stripAllBlocks already removed it before this runs, so this is a no-op then.)
+    if (settings.hideBlocks) {
+        const blk = extractHeaderFormat(body);
+        if (blk) body = stripHeaderBlock(body, blk.fullMatch);
+    }
 
     const rendered = renderHeader(fmt, st);
     if (!rendered) return;

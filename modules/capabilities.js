@@ -132,14 +132,33 @@ async function processCapabilityBlock(fields, settings) {
     // stat_changes apply once on declaration (the former "evolution" behavior, now generic)
     if (fields.stat_changes && owner === 'player') _applyCapabilityStatChanges(fields.stat_changes, fields.name);
 
-    if (settings.campaignLorebook) {
-        await upsertEntry(settings.campaignLorebook, {
-            ...entryBase(`[Capability] ${fields.name}`, keywords, _capabilityEntryContent(cap),
-                settings.loreOrder, settings, { type: 'CAPABILITY', category, slug, entity_slug: owner, progression: cap.progression_id }),
-        });
-    }
+    await upsertCapabilityEntry(cap, settings);
     console.log(`[${MODULE_NAME}] Capability recorded: ${cap.name} (${category}/${cap.progression_id})`);
     return true;
+}
+
+/** Upsert the `[Capability] <name>` lorebook entry for one capability (idempotent).
+ *  Shared by processCapabilityBlock (at creation) and backfillCapabilityEntries. */
+async function upsertCapabilityEntry(cap, settings) {
+    if (!settings.campaignLorebook || !cap?.name) return;
+    const keywords = (cap.keywords && cap.keywords.length) ? cap.keywords : expandNameKeys(cap.name);
+    await upsertEntry(settings.campaignLorebook,
+        entryBase(`[Capability] ${cap.name}`, keywords, _capabilityEntryContent(cap), settings.loreOrder, settings,
+            { type: 'CAPABILITY', category: cap.category, slug: slugify(cap.name), entity_slug: cap.entity_slug || 'player', progression: cap.progression_id }));
+}
+
+/** Self-heal: ensure every capability in state has its `[Capability]` lorebook entry.
+ *  A capability written while no campaign lorebook was set (or after a failed/lost write)
+ *  otherwise lives in state — shown in the panel, projected into [Player:Skills] — but has
+ *  no clickable entry. Loads the book once and only writes the MISSING ones. */
+async function backfillCapabilityEntries(settings) {
+    if (!settings.campaignLorebook) return;
+    const caps = Object.values(getCharState().capabilities || {});
+    if (!caps.length) return;
+    const data = await SillyTavern.getContext().loadWorldInfo(settings.campaignLorebook);
+    const present = new Set(data?.entries ? Object.values(data.entries).map(e => e.comment) : []);
+    for (const cap of caps)
+        if (!present.has(`[Capability] ${cap.name}`)) await upsertCapabilityEntry(cap, settings);
 }
 
 /** Apply "attr:+N, attr:-N" deltas to the player as a logged gm_event change. */
